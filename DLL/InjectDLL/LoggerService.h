@@ -21,6 +21,7 @@ namespace Logging
 {
 
 	static std::ofstream LogFile;
+	static std::ofstream PidLogFile;
 	static DWORD Timer;
 	static std::string TimerName = "";
 	static std::shared_mutex LogMutex;

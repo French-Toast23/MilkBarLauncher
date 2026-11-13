@@ -109,6 +109,30 @@ namespace Breath_of_the_Wild_Multiplayer.Properties {
         
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string cemuLocation {
+            get {
+                return ((string)(this["cemuLocation"]));
+            }
+            set {
+                this["cemuLocation"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string gameLocation {
+            get {
+                return ((string)(this["gameLocation"]));
+            }
+            set {
+                this["gameLocation"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
         [global::System.Configuration.DefaultSettingValueAttribute(@"{""Name"":""Link"",""Description"":""This model does allow for armor sync."",""IsArmorSync"":true,""Model"":""Jugador1ModelNameLongForASpecificReason"",""BumiiData"":null,""AlternativeModel"":"""",""BustPic"":""/Images/Bust/Link.png"",""BodyPic"":""/Images/Body/Link.png"",""ModelIndex"":0,""HasCustomAction"":false,""Selected"":true,""CustomAction"":null}")]
         public string playerModel {
             get {

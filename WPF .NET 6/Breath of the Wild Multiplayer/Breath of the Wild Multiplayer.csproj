@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
@@ -129,7 +129,7 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <Content Include="Resources\InjectDLL.dll">
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <EmbeddedResource Include="AppdataFiles\ArmorMapping.txt" />
     <EmbeddedResource Include="AppdataFiles\QuestFlags.txt" />
@@ -224,7 +224,7 @@
   <ItemGroup>
     <PackageReference Include="AampLibrary" Version="1.0.10" />
     <PackageReference Include="CsYaz0" Version="1.0.2" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.2" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.2" />
   </ItemGroup>
 
@@ -242,13 +242,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SarcWrapper\SarcWrapper.csproj" />
+    <ProjectReference Include="..\BfresLibrary\BfresLibrary.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Reference Include="BfresLibrary">
-      <HintPath>..\..\..\NCF-Library\BfresLibrary\bin\Debug\net8.0-windows\BfresLibrary.dll</HintPath>
-    </Reference>
-  </ItemGroup>
 
   <ItemGroup>
     <Compile Update="Properties\Resources.Designer.cs">

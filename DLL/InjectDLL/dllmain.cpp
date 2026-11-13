@@ -28,6 +28,7 @@ Memory::BombSyncer* Main::BombSync = new Memory::BombSyncer();
 ////////////////// Parameter initialization //////////////////
 
 uint64_t Main::baseAddr = Memory::getBaseAddress();
+uint64_t Main::s_LocalLinkAddr = 0;
 
 std::vector < std::vector<float> > Main::Jugador1Queue = { {}, {}, {} };
 std::vector < std::vector<float> > Main::Jugador2Queue = { {}, {}, {} };
@@ -85,69 +86,81 @@ DWORD __stdcall EjectThread(LPVOID lpParameter) {
 
 bool startServerLoop()
 {
-
-    FILE* fp;
-    freopen_s(&fp, "CONOUT$", "w", stdout); // output only
-    std::cout << "Start of the console" << std::endl;
-
-    CreateThread(0, 0, (LPTHREAD_START_ROUTINE)Main::mainServerLoop, 0, 0, 0);
-    return true;
-
+    Logging::LoggerService::LogInformation("startServerLoop: Spawning mainServerLoop thread...");
+    HANDLE hThread = CreateThread(0, 0, (LPTHREAD_START_ROUTINE)Main::mainServerLoop, 0, 0, 0);
+    if (hThread)
+    {
+        CloseHandle(hThread);
+        return true;
+    }
+    Logging::LoggerService::LogError("startServerLoop: CreateThread failed: " + std::to_string(GetLastError()));
+    return false;
 }
 
 void readInstruction()
 {
-
-    bool success = false;
-    DWORD read;
+    DWORD read = 0;
     bool started = false;
 
     while (!started)
     {
-        TCHAR chBuff[BUFF_SIZE];
+        TCHAR chBuff[BUFF_SIZE] = { 0 };
         TCHAR responsePositive[BUFF_SIZE] = "Succeeded";
         TCHAR responseNegative[BUFF_SIZE] = "Failed";
         bool response = false;
 
-        do
+        BOOL readSuccess = ReadFile(namedPipe->hPipe, chBuff, (BUFF_SIZE - 1) * sizeof(TCHAR), &read, nullptr);
+        if (!readSuccess || read == 0)
         {
-            success = ReadFile(namedPipe->hPipe, chBuff, BUFF_SIZE * sizeof(TCHAR), &read, nullptr);
-            
-            if (strstr(chBuff, "!connect"))
-            {
-                response = Main::connectToServer(chBuff);
-                memset(chBuff, 0, sizeof(chBuff));
+            Sleep(50);
+            continue;
+        }
 
-                Logging::LoggerService::LogInformation("Connected to server successfully");
-            }
-            else if (strstr(chBuff, "!startServerLoop"))
-            {
-                Logging::LoggerService::LogInformation("Start server loop requested...");
+        chBuff[read] = '\0';
+        Logging::LoggerService::LogInformation(std::string("Received pipe instruction: ") + chBuff);
 
-                if (!started)
-                {
-                    response = true;
-                    started = true;
-                }
-                else
-                {
-                    exit(1);
-                }
-            }
-
-            if (response)
+        if (strstr(chBuff, "!connect"))
+        {
+            response = Main::connectToServer(chBuff);
+            Logging::LoggerService::LogInformation(response ? "connectToServer: Succeeded" : "connectToServer: Failed");
+        }
+        else if (strstr(chBuff, "!startServerLoop"))
+        {
+            Logging::LoggerService::LogInformation("Start server loop requested...");
+            if (!started)
             {
-                success = WriteFile(namedPipe->hPipe, responsePositive, BUFF_SIZE * sizeof(TCHAR), &read, nullptr);
+                response = true;
+                started = true;
             }
             else
             {
-                success = WriteFile(namedPipe->hPipe, responseNegative, BUFF_SIZE * sizeof(TCHAR), &read, nullptr);
+                exit(1);
             }
-        } while (!success);
+        }
 
+        DWORD written = 0;
+        if (response)
+        {
+            WriteFile(namedPipe->hPipe, responsePositive, BUFF_SIZE * sizeof(TCHAR), &written, nullptr);
+        }
+        else
+        {
+            WriteFile(namedPipe->hPipe, responseNegative, BUFF_SIZE * sizeof(TCHAR), &written, nullptr);
+        }
     }
 
     startServerLoop();
+}
+
+DWORD WINAPI WorkerThread(LPVOID lpParam)
+{
+    Sleep(500);
+    Logging::LoggerService::StartLoggerService();
+    Logging::LoggerService::LogInformation("InjectDLL WorkerThread started (PID: " + std::to_string(GetCurrentProcessId()) + ")");
+    Main::SetupAssemblyPatches();
+    namedPipe->createServer();
+    readInstruction();
+    return 0;
 }
 
 BOOL APIENTRY DllMain( HMODULE hModule,
@@ -158,13 +171,9 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     switch (ul_reason_for_call)
     {
     case DLL_PROCESS_ATTACH:
-        //AllocConsole();
-        Main::SetupAssemblyPatches();
-        Logging::LoggerService::StartLoggerService();
-        namedPipe->createServer();
-        CreateThread(0, 0, (LPTHREAD_START_ROUTINE)readInstruction, 0, 0, 0);
-    case DLL_THREAD_ATTACH:
-    case DLL_THREAD_DETACH:
+        DisableThreadLibraryCalls(hModule);
+        CreateThread(NULL, 0, WorkerThread, NULL, 0, NULL);
+        break;
     case DLL_PROCESS_DETACH:
         break;
     }

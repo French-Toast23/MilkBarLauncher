@@ -85,22 +85,24 @@ bool Main::connectToServer(std::string serverMessage)
         }
     }
 
-    client->connectToServer(IP, PORT);
+    if (!client->connectToServer(IP, PORT))
+    {
+        Logging::LoggerService::LogError("Failed to establish TCP connection to server: " + IP + ":" + PORT);
+        return false;
+    }
 
     byte ConnectBytes[7168];
     Serialization::Serializer::SerializeConnectData(&ConnectBytes[0], NAME, PASSWORD, MODELTYPE, MODELDATA);
-
-    //Serialization::Serializer::CopyToArray(&ConnectBytes[0]);
 
     client->sendBytes(ConnectBytes);
 
     serverData = client->receive();
 
-    std::cout << serverData << std::endl;
+    Logging::LoggerService::LogInformation("Server response: " + serverData);
 
     rapidjson::Document serverDoc = Connectivity::deserializeServerData(serverData);
 
-    if (serverDoc["Response"].GetInt() == 1)
+    if (serverDoc.IsObject() && serverDoc.HasMember("Response") && serverDoc["Response"].GetInt() == 1)
     {
         //int pN = serverData[2] - '0';
         int pN = serverDoc["PlayerNumber"].GetInt();
@@ -1897,7 +1899,16 @@ void Main::Setup()
     Logging::LoggerService::LogInformation("Start of Breath of the Wild Multiplayer");
 
     while(Main::baseAddr == 0)
+    {
         Main::baseAddr = Memory::getBaseAddress();
+        if (Main::baseAddr == 0)
+            Sleep(100);
+    }
+    Logging::LoggerService::LogInformation("Base memory address acquired: " + std::to_string(Main::baseAddr));
+
+    // Ensure HLE functions are registered with Cemu now that base memory and RPLs are loaded
+    init();
+    BindHLEAddresses();
 
     /* Local instance startup */
 
@@ -1907,11 +1918,35 @@ void Main::Setup()
 
     Logging::LoggerService::LogInformation("Assigned to player " + std::to_string(playerNumber));
 
-    while (Game::GameInstance->baseAddr == 0)
+    if (Main::s_LocalLinkAddr != 0)
     {
-        Sleep(100);
+        Logging::LoggerService::LogInformation("Attempting to bind cached Link actor at: 0x" + std::to_string(Main::s_LocalLinkAddr));
+        Game::GameInstance->setAddress(Main::s_LocalLinkAddr);
     }
 
+    int waitCount = 0;
+    while (Game::GameInstance->baseAddr == 0)
+    {
+        if (Main::s_LocalLinkAddr != 0)
+        {
+            Game::GameInstance->setAddress(Main::s_LocalLinkAddr);
+            if (Game::GameInstance->baseAddr != 0)
+            {
+                Logging::LoggerService::LogInformation("Link actor successfully bound at: 0x" + std::to_string(Game::GameInstance->baseAddr));
+                break;
+            }
+        }
+        Sleep(200);
+        waitCount++;
+        if (waitCount % 25 == 0)
+        {
+            init(); // Re-ensure HLE hooks are active in Cemu
+            BindHLEAddresses();
+            Logging::LoggerService::LogInformation("Waiting for Link actor to be detected (ensure game save is loaded)...");
+        }
+    }
+
+    Logging::LoggerService::LogInformation("Scanning game instance...");
     try
     {
         Game::GameInstance->scan();

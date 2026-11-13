@@ -106,10 +106,14 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
         {
             WindowHandle = new WindowInteropHelper(SharedData.MainView.Window).Handle;
             CemuProcess = cemuProcess;
+            cemuProcess.Refresh();
             CemuWindowHandle = cemuProcess.MainWindowHandle;
             lastClientSize = new RECT();
 
-            PutWindowOnTop();
+            if (CemuWindowHandle != IntPtr.Zero)
+            {
+                PutWindowOnTop();
+            }
 
             Timer.Interval = TimeSpan.FromMilliseconds(50);
             Timer.Tick += new EventHandler(timer_tick);
@@ -157,9 +161,23 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
 
         private static void timer_tick(object sender, EventArgs e)
         {
-            if(CemuProcess.HasExited)
+            if (CemuProcess.HasExited)
             {
                 Environment.Exit(0);
+            }
+
+            if (CemuWindowHandle == IntPtr.Zero)
+            {
+                CemuProcess.Refresh();
+                CemuWindowHandle = CemuProcess.MainWindowHandle;
+                if (CemuWindowHandle != IntPtr.Zero)
+                {
+                    PutWindowOnTop();
+                }
+                else
+                {
+                    return;
+                }
             }
 
             SharedData.MainView.Window.WindowState = WindowState.Maximized;

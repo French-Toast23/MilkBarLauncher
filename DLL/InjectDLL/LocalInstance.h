@@ -557,36 +557,42 @@ namespace MemoryAccess
 
 		std::map<std::string, int> readWeaponDamages()
 		{
-			char* appdata = nullptr;
-			size_t sz = 0;
-
-			_dupenv_s(&appdata, &sz, "APPDATA");
-
-			std::string str(appdata);
-
-			std::string filepath = "\\BOTWM\\WeaponDamages.txt";
-
-			std::ifstream file(appdata + filepath);
-
-			std::stringstream buffer;
-			buffer << file.rdbuf();
-
-			rapidjson::Document doc;
-			doc.Parse(buffer.str().c_str());
-
-			rapidjson::StringBuffer buf;
-			rapidjson::Writer<rapidjson::StringBuffer> writer(buf);
-
-			doc.Accept(writer);
-
 			std::map<std::string, int> result = {};
-
-			for (rapidjson::Value::ConstMemberIterator iter = doc.MemberBegin(); iter != doc.MemberEnd(); iter++)
+			try
 			{
-				std::string WeaponName = iter->name.GetString();
-				result.insert({ WeaponName, iter->value.GetInt()});
-			}
+				char* appdata = nullptr;
+				size_t sz = 0;
+				if (_dupenv_s(&appdata, &sz, "APPDATA") == 0 && appdata != nullptr)
+				{
+					std::string filepath = std::string(appdata) + "\\BOTWM\\WeaponDamages.txt";
+					free(appdata);
 
+					std::ifstream file(filepath);
+					if (file.is_open())
+					{
+						std::stringstream buffer;
+						buffer << file.rdbuf();
+						std::string content = buffer.str();
+
+						rapidjson::Document doc;
+						doc.Parse(content.c_str());
+
+						if (!doc.HasParseError() && doc.IsObject())
+						{
+							for (auto iter = doc.MemberBegin(); iter != doc.MemberEnd(); ++iter)
+							{
+								if (iter->name.IsString() && iter->value.IsInt())
+								{
+									result.insert({ iter->name.GetString(), iter->value.GetInt() });
+								}
+							}
+						}
+					}
+				}
+			}
+			catch (...)
+			{
+			}
 			return result;
 		}
 	};

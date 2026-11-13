@@ -99,17 +99,17 @@
             </customControls:optionsLabel>
 
             <Button 
-                Content="Select settings.json" 
+                Content="Select Cemu.exe" 
                 Grid.Row="2" 
-                Command="{Binding bcmlButton}" 
+                Command="{Binding cemuButton}" 
                 Style="{StaticResource customButton}">
                 <Button.Tag>
-                    <sys:String>Launch settings</sys:String>
+                    <sys:String>Cemu Location</sys:String>
                 </Button.Tag>
 
                 <Button.ToolTip>
                     <ToolTip
-                        Content="{Binding Source={x:Static properties:Settings.Default}, Path=bcmlLocation}"
+                        Content="{Binding CemuLocationTooltip}"
                         Style="{StaticResource customTooltip}">
                     </ToolTip>
                 </Button.ToolTip>

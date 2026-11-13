@@ -15,6 +15,7 @@ namespace Main
 	//extern Logging::LoggerService* Logger;
 
 	extern uint64_t baseAddr;
+	extern uint64_t s_LocalLinkAddr;
 
 	extern DWORD t0;
 	extern DWORD t1;

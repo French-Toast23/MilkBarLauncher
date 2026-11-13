@@ -41,12 +41,11 @@ namespace BOTWM.Server
 
         public bool serverStart(string ip, int port, string password, string description, ServerSettings settings)
         {
-
             this.Gamemode = settings.SettingsName;
 
             Dictionary<string, string> ipAddresses = new Dictionary<string, string>();
 
-            if (ip == "localhost")
+            try
             {
                 var host = Dns.GetHostEntry(Dns.GetHostName());
 
@@ -58,29 +57,59 @@ namespace BOTWM.Server
                         {
                             if (uip.Address.AddressFamily == AddressFamily.InterNetwork && host.AddressList.Contains(uip.Address))
                             {
-                                ipAddresses.Add(item.Name.ToString(), uip.Address.ToString());
+                                if (!ipAddresses.ContainsKey(item.Name))
+                                    ipAddresses.Add(item.Name, uip.Address.ToString());
                             }
                         }
                     }
                 }
             }
-            else
+            catch (Exception ex)
             {
-                ipAddresses.Add("custom IP", ip);
+                Logger.LogDebug($"Could not enumerate network interfaces: {ex.Message}");
             }
 
-            foreach (var key in ipAddresses.Keys)
+            bool bindAll = string.IsNullOrWhiteSpace(ip) ||
+                           ip.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+                           ip.Equals("0.0.0.0", StringComparison.OrdinalIgnoreCase) ||
+                           ip.Equals("any", StringComparison.OrdinalIgnoreCase);
+
+            if (bindAll)
             {
                 try
                 {
-                    listen = new Socket(AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp);
-                    listen.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.IPv6Only, false);
-                    string IP = ipAddresses[key].ToString();
-
-                    IPEndPoint connect = new IPEndPoint(IPAddress.Parse(IP), port);
+                    listen = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                    IPEndPoint connect = new IPEndPoint(IPAddress.Any, port);
                     listen.Bind(connect);
 
-                    Logger.LogInformation("Server opened on " + key + ".");
+                    Logger.LogInformation($"Server opened on port {port} (listening on all interfaces: 0.0.0.0).");
+                    Logger.LogInformation("Available connection addresses for players:");
+                    Logger.LogInformation($"  - Localhost (same PC): 127.0.0.1:{port}");
+                    foreach (var key in ipAddresses.Keys)
+                    {
+                        Logger.LogInformation($"  - {key}: {ipAddresses[key]}:{port}");
+                    }
+
+                    ServerData.Startup("0.0.0.0", port, password, description, settings);
+
+                    serverOpen = true;
+
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError($"Failed to bind to 0.0.0.0:{port}: {ex}");
+                }
+            }
+            else
+            {
+                try
+                {
+                    listen = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                    IPEndPoint connect = new IPEndPoint(IPAddress.Parse(ip), port);
+                    listen.Bind(connect);
+
+                    Logger.LogInformation($"Server opened on {ip}:{port}.");
 
                     ServerData.Startup(ip, port, password, description, settings);
 
@@ -90,8 +119,7 @@ namespace BOTWM.Server
                 }
                 catch (Exception ex)
                 {
-                    Logger.LogError(ex.ToString());
-                    continue;
+                    Logger.LogError($"Failed to bind to custom IP {ip}:{port}: {ex}");
                 }
             }
 

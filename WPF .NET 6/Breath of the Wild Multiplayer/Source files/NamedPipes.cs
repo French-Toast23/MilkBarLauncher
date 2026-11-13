@@ -15,8 +15,8 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
 
         public static void StartServer()
         {
-            _server = new NamedPipeServerStream(@"languageConnectionPipe", PipeDirection.InOut, 2, PipeTransmissionMode.Message);
-            _server.WaitForConnectionWithTimeout(5);
+            _server = new NamedPipeServerStream(@"languageConnectionPipe", PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances, PipeTransmissionMode.Message);
+            _server.WaitForConnectionWithTimeout(10);
             Online = true;
         }
 
@@ -98,6 +98,7 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
             {
                 if (namedPipe.IsConnected)
                     return;
+                Thread.Sleep(50);
             }
 
             namedPipe.Disconnect();

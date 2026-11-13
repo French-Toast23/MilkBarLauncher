@@ -1,4 +1,4 @@
-﻿namespace BOTW.Logging
+namespace BOTW.Logging
 {
     public static class Logger
     {
@@ -25,7 +25,7 @@
         private static string LogPath = $"{CurrentDirectory}\\LatestLog.txt";
         private static string LogsFolder = $"{CurrentDirectory}\\Logs";
 
-        private static Mutex logMutex = new Mutex();
+        private static readonly object logLock = new object();
 
         public static void Start(LogLevelEnum logLevel, LogLevelEnum cmdLevel)
         {
@@ -48,9 +48,19 @@
 
             string userInput = Console.ReadLine();
 
-            using (StreamWriter LogFile = new StreamWriter(LogPath, true))
+            lock (logLock)
             {
-                LogFile.WriteLine(userInput);
+                try
+                {
+                    using (FileStream fs = new FileStream(LogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                    using (StreamWriter LogFile = new StreamWriter(fs))
+                    {
+                        LogFile.WriteLine(userInput);
+                    }
+                }
+                catch
+                {
+                }
             }
 
             return userInput;
@@ -58,32 +68,39 @@
 
         private static void SetupLogFile()
         {
-            if(File.Exists(LogPath))
+            try
             {
-                string creationTime = File.GetCreationTime(LogPath).ToString("yyyy-MM-dd, HH-mm-ss");
-
-                if (!Directory.Exists(LogsFolder))
-                    Directory.CreateDirectory(LogsFolder);
-
-                string postName = "";
-
-                // The correct way to manage a log file already existing is by creating a differently named log file
-                if(File.Exists($"{LogsFolder}\\{creationTime}.txt"))
-                    postName = $"({Directory.GetFiles(LogsFolder).Where(file => Path.GetFileNameWithoutExtension(file).StartsWith(creationTime)).Count()})";
-
-                if (!File.Exists($"{LogsFolder}\\{creationTime}{postName}.txt"))
+                if(File.Exists(LogPath))
                 {
-                    File.Move(LogPath, $"{LogsFolder}\\{creationTime}{postName}.txt");
+                    string creationTime = File.GetCreationTime(LogPath).ToString("yyyy-MM-dd, HH-mm-ss");
+
+                    if (!Directory.Exists(LogsFolder))
+                        Directory.CreateDirectory(LogsFolder);
+
+                    string postName = "";
+
+                    // The correct way to manage a log file already existing is by creating a differently named log file
+                    if(File.Exists($"{LogsFolder}\\{creationTime}.txt"))
+                        postName = $"({Directory.GetFiles(LogsFolder).Where(file => Path.GetFileNameWithoutExtension(file).StartsWith(creationTime)).Count()})";
+
+                    if (!File.Exists($"{LogsFolder}\\{creationTime}{postName}.txt"))
+                    {
+                        File.Move(LogPath, $"{LogsFolder}\\{creationTime}{postName}.txt");
+                    }
+                    else
+                    {
+                        // If for some reason, even after naming the file differently, it fails. Here we can delete it.
+                        Console.WriteLine($"Failed to create file at: {LogsFolder}\\{creationTime}{postName}.txt. Deleting it...");
+                        File.Delete(LogPath);
+                    }
                 }
-                else
-                {
-                    // If for some reason, even after naming the file differently, it fails. Here we can delete it.
-                    Console.WriteLine($"Failed to create file at: {LogsFolder}\\{creationTime}{postName}.txt. Deleting it...");
-                    File.Delete(LogPath);
-                }
+
+                File.WriteAllText(LogPath, string.Empty);
             }
-
-            File.CreateText(LogPath);
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Warning] Could not initialize log file: {ex.Message}");
+            }
         }
 
         private static void WriteToLog(LogWriteLevelEnum writeLevel, string message, string details, ConsoleColor color, bool newLine = true, bool writeToCMD = true)
@@ -96,27 +113,27 @@
             if ((int)writeLevel > (int)LogLevel)
                 return;
 
-            logMutex.WaitOne(100);
-
-            try
+            lock (logLock)
             {
-                using (StreamWriter LogFile = new StreamWriter(LogPath, true))
+                try
                 {
-                    LogFile.Write($"[{MessageTime}] {message}");
+                    using (FileStream fs = new FileStream(LogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                    using (StreamWriter LogFile = new StreamWriter(fs))
+                    {
+                        LogFile.Write($"[{MessageTime}] {message}");
 
-                    if (!string.IsNullOrEmpty(details))
-                        LogFile.Write($" - Details: {details}");
+                        if (!string.IsNullOrEmpty(details))
+                            LogFile.Write($" - Details: {details}");
 
-                    if (newLine)
-                        LogFile.WriteLine();
+                        if (newLine)
+                            LogFile.WriteLine();
+                    }
+                }
+                catch(Exception ex)
+                {
+                    WriteToConsole(LogWriteLevelEnum.ERR, $"\nCould not write to log file: {ex.Message}. Please make sure that you don't have another server process and restart your server.", MessageTime, ConsoleColor.DarkRed, true);
                 }
             }
-            catch(Exception ex)
-            {
-                WriteToConsole(LogWriteLevelEnum.ERR, "\nCould not write to log file. Please make sure that you don't have another server process and restart your server.", MessageTime, ConsoleColor.DarkRed, true);
-            }
-
-            logMutex.ReleaseMutex();
         }
 
         private static void WriteToConsole(LogWriteLevelEnum writeLevel, string message, string datetime, ConsoleColor color, bool newLine)

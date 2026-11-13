@@ -24,19 +24,29 @@ std::string LoggerService::GetTimeAsString(int Format)
 
 void LoggerService::WriteToLog(std::string Message, std::string LogType, const char* caller)
 {
-
 	Logging::LogMutex.lock();
 
-	Logging::LogFile << "[" << LogType << "]";
-	Logging::LogFile << "[" << LoggerService::GetTimeAsString(1) << "]";
-	
-	if (caller != "")
-		Logging::LogFile << "[" << caller << "]";
+	std::string timeStr = LoggerService::GetTimeAsString(1);
 
-	Logging::LogFile << " " << Message << std::endl;
+	if (Logging::PidLogFile.is_open())
+	{
+		Logging::PidLogFile << "[" << LogType << "][" << timeStr << "]";
+		if (caller != nullptr && caller[0] != '\0')
+			Logging::PidLogFile << "[" << caller << "]";
+		Logging::PidLogFile << " " << Message << std::endl;
+		Logging::PidLogFile.flush();
+	}
+
+	if (Logging::LogFile.is_open())
+	{
+		Logging::LogFile << "[" << LogType << "][" << timeStr << "]";
+		if (caller != nullptr && caller[0] != '\0')
+			Logging::LogFile << "[" << caller << "]";
+		Logging::LogFile << " " << Message << std::endl;
+		Logging::LogFile.flush();
+	}
 
 	Logging::LogMutex.unlock();
-
 }
 
 void LoggerService::StartLoggerService()
@@ -108,21 +118,22 @@ void LoggerService::StartLoggerService()
 
 	file.close();
 
-	LogFile.open((appdata + filepath).c_str(), std::ios_base::app);
-	LogFile << LoggerService::GetTimeAsString(2) << std::endl;
-	LogFile << "Logging level: ";
-
-	switch (LEVEL)
+	DWORD currentPid = GetCurrentProcessId();
+	std::string pidFilepath = "\\BOTWM\\LatestLog_" + std::to_string(currentPid) + ".txt";
+	PidLogFile.open((appdata + pidFilepath).c_str(), std::ios_base::out | std::ios_base::trunc);
+	if (PidLogFile.is_open())
 	{
-	case 0:
-		LogFile << "Information" << std::endl;
-		break;
-	case 1:
-		LogFile << "Warning" << std::endl;
-		break;
-	case 2:
-		LogFile << "Debug" << std::endl;
-		break;
+		PidLogFile << LoggerService::GetTimeAsString(2) << " [PID: " << currentPid << "]" << std::endl;
+		PidLogFile << "Logging level: Debug" << std::endl;
+		PidLogFile.flush();
+	}
+
+	LogFile.open((appdata + filepath).c_str(), std::ios_base::app);
+	if (LogFile.is_open())
+	{
+		LogFile << LoggerService::GetTimeAsString(2) << " [PID: " << currentPid << "]" << std::endl;
+		LogFile << "Logging level: Debug" << std::endl;
+		LogFile.flush();
 	}
 
 }

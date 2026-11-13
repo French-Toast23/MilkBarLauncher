@@ -1,4 +1,4 @@
-﻿using Breath_of_the_Wild_Multiplayer.Source_files;
+using Breath_of_the_Wild_Multiplayer.Source_files;
 using Breath_of_the_Wild_Multiplayer.MVVM.Model;
 using System;
 using System.Collections.ObjectModel;
@@ -132,7 +132,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
             lastSelected = (int)newSelection;
         }
 
-        void LoadServers()
+        public void LoadServers()
         {
             serverDataModel.serversAdded = 0;
             serversToShow.Clear();
@@ -191,43 +191,76 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
                 serverToJoin = _selectedServer[0];
 
             if (string.IsNullOrEmpty(BcmlSettings.GameDir) || string.IsNullOrEmpty(BcmlSettings.CemuDir))
-                throw new ApplicationException("Bcml not setup.");
+                throw new ApplicationException("Cemu or Game path not found. Please verify your game and Cemu installation.");
 
             if (!IsModInstalled)
-                throw new ApplicationException("Mod is not setup on BCML. Make sure to follow the instructions to install the mod.");
+                throw new ApplicationException("Mod graphic pack is not installed in Cemu. Please ensure BreathOfTheWild_Multiplayer graphic pack is installed.");
 
             string cemuSettingsPath = Path.Combine(BcmlSettings.CemuDir, "settings.xml");
+            if (!File.Exists(cemuSettingsPath))
+            {
+                string appDataSettings = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Cemu", "settings.xml");
+                if (File.Exists(appDataSettings))
+                    cemuSettingsPath = appDataSettings;
+            }
 
             // Does the settings file for cemu exist?
             if (!File.Exists(cemuSettingsPath))
-                throw new ApplicationException("Cemu settings file doesn't exist. Make sure to have open cemu and setup the graphic packs");
+                throw new ApplicationException("Cemu settings file doesn't exist. Make sure to have opened Cemu at least once and setup the graphic packs.");
 
             XmlDocument doc = new XmlDocument();
             doc.Load(cemuSettingsPath);
 
             XmlNode GraphicPacksNode = doc.DocumentElement.SelectSingleNode("/content/GraphicPack");
 
-            Dictionary<string, string> nodesToValidate = new Dictionary<string, string>() {
-                {"  · Utilities", "bcmlPatches\\MilkBarLauncher\\rules.txt"},
-                {"  · Extended Memory", "BreathOfTheWild\\Mods\\ExtendedMemory\\rules.txt" }
+            var aliasesToValidate = new Dictionary<string, string[]>
+            {
+                { "  - Multiplayer Mod", new[] { "BreathOfTheWild_Multiplayer", "MilkBarLauncher" } },
+                { "  - Extended Memory", new[] { "ExtendedMemory" } }
             };
 
             List<string> missingGraphicPacks = new List<string>();
 
             try
             {
-                missingGraphicPacks = nodesToValidate
-                                        .Where(sNode => !GraphicPacksNode.ChildNodes.Cast<XmlNode>().Any(node => node.Attributes.Cast<XmlAttribute>().Any(attribute => attribute.Value.Contains(sNode.Value)))).Select(sNode => sNode.Key).ToList();
+                if (GraphicPacksNode != null)
+                {
+                    foreach (var pair in aliasesToValidate)
+                    {
+                        bool isActive = false;
+                        foreach (XmlNode node in GraphicPacksNode.ChildNodes)
+                        {
+                            var attr = node.Attributes?.Cast<XmlAttribute>().FirstOrDefault(a => a.Name.Equals("filename", StringComparison.OrdinalIgnoreCase));
+                            if (attr != null)
+                            {
+                                string val = attr.Value.Replace('/', '\\');
+                                if (pair.Value.Any(alias => val.IndexOf(alias, StringComparison.OrdinalIgnoreCase) >= 0))
+                                {
+                                    var disabledAttr = node.Attributes?["disabled"];
+                                    if (disabledAttr == null || !string.Equals(disabledAttr.Value, "true", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        isActive = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (!isActive)
+                            missingGraphicPacks.Add(pair.Key);
+                    }
+                }
+                else
+                {
+                    missingGraphicPacks.AddRange(aliasesToValidate.Keys);
+                }
             }
             catch(Exception ex)
             {
-                // If any issue happened while reading settings xml.
                 throw new ApplicationException("Failed to read cemu graphic packs settings. Please make sure that your cemu is setup correctly.");
             }
 
             if(missingGraphicPacks.Any())
                 throw new ApplicationException("The following needed graphic packs are not selected on Cemu\n\n" + string.Join("\n", missingGraphicPacks) + "\n\nPlease make sure to select them before joining a server.");
-
             if (string.IsNullOrEmpty(serverToJoin.IP) || !serverToJoin.open)
                 return;
 
@@ -284,8 +317,21 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
             List<Process> ProcessesToFilter = Injector.GetProcesses("Cemu");
 
             SharedData.SetLoadingMessage("Starting Cemu...");
+            BcmlSettings.ValidateAndFixGraphicPack();
 
-            await Task.Run(() => Process.Start($"{BcmlSettings.CemuDir}/cemu.exe", $"-g \"{BcmlSettings.GameDir.Replace("content", "code")}/U-King.rpx\""));
+            string cemuExe = Path.Combine(BcmlSettings.CemuDir, "Cemu.exe");
+            if (!File.Exists(cemuExe))
+                cemuExe = Path.Combine(BcmlSettings.CemuDir, "cemu.exe");
+
+            string rpxFile = Path.Combine(BcmlSettings.GameDir.Replace("content", "code"), "U-King.rpx");
+
+            var cemuStartInfo = new ProcessStartInfo
+            {
+                FileName = cemuExe,
+                Arguments = $"-g \"{rpxFile}\"",
+                WorkingDirectory = BcmlSettings.CemuDir
+            };
+            await Task.Run(() => Process.Start(cemuStartInfo));
 
             await Task.Delay(500);
 
@@ -293,8 +339,12 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
 
             Process CemuProcess = null;
 
+            string dllPath = Path.Combine(AppContext.BaseDirectory, "Resources", "InjectDLL.dll");
+            if (!File.Exists(dllPath))
+                dllPath = Path.Combine(Directory.GetCurrentDirectory(), "Resources", "InjectDLL.dll");
+
             await Task.Run(() => {
-                CemuProcess = Injector.Inject("Cemu", Directory.GetCurrentDirectory() + "\\Resources\\InjectDLL.dll", ProcessesToFilter);
+                CemuProcess = Injector.Inject("Cemu", dllPath, ProcessesToFilter);
             });
 
             SharedData.SetLoadingMessage("Starting pipe...");
@@ -311,7 +361,9 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
 
             SharedData.SetLoadingMessage("Connecting to server...");
 
-            List<byte> instruction = Encoding.UTF8.GetBytes($"!connect;{serverToJoin.IP};{serverToJoin.Port};{serverToJoin.Password};{Properties.Settings.Default.playerName};{serverToJoin.Name};{(int)charModel.Type};").ToList();
+            string resolvedIp = serverDataModel.ResolveIP(serverToJoin.IP).ToString();
+
+            List<byte> instruction = Encoding.UTF8.GetBytes($"!connect;{resolvedIp};{serverToJoin.Port};{serverToJoin.Password};{Properties.Settings.Default.playerName};{serverToJoin.Name};{(int)charModel.Type};").ToList();
 
             if ((int)charModel.Type < 2)
             {
@@ -352,6 +404,15 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
             SharedData.MainView.currentView = SharedData.MainView.IngameMenuVM;
             SharedData.MainView.disableBackground = true;
             SharedData.MainView.Window.Topmost = true;
+
+            CemuProcess.Refresh();
+            int handleRetries = 0;
+            while (CemuProcess.MainWindowHandle == IntPtr.Zero && !CemuProcess.HasExited && handleRetries < 20)
+            {
+                await Task.Delay(250);
+                CemuProcess.Refresh();
+                handleRetries++;
+            }
 
             CemuFollower.Setup(CemuProcess);
             NamedPipes.StartListenThread();

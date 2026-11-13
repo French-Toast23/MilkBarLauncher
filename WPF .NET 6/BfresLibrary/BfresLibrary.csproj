@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Copyright>(c) KillzXGaming, and Syroot, licensed under MIT</Copyright>
+    <TargetFramework>net8.0</TargetFramework>
+    <Authors>KillzXGaming and Syroot. (Updated by ArchLeaders)</Authors>
+    <Description>Updated version of KillzXGaming's BfresLibrary</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Syroot.NintenTools.NSW.Bntx">
+      <HintPath>Lib\Syroot.NintenTools.NSW.Bntx.dll</HintPath>
+    </Reference>
+    <Content Include="Lib\Syroot.NintenTools.NSW.Bntx.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Syroot.BinaryData" Version="5.2.2" />
+    <PackageReference Include="Syroot.BinaryData.Core" Version="5.2.0" />
+    <PackageReference Include="Syroot.Maths" Version="1.5.3" />
+  </ItemGroup>
+
+</Project>

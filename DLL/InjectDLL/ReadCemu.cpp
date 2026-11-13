@@ -1,12 +1,36 @@
 #include "Memory.h"
+#include "LoggerService.h"
 #include <iostream>
+#include <algorithm>
+
+static bool SafeCopy(void* dest, const void* src, size_t count)
+{
+    __try
+    {
+        memcpy(dest, src, count);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
+}
 
 uint64_t Memory::getBaseAddress()
 {
     if (base_addr == 0)
     {
-        Memory::memory_getBaseType memory_getBase = (Memory::memory_getBaseType)GetProcAddress(GetModuleHandle("Cemu.exe"), "memory_getBase");
-        base_addr = (uint64_t)memory_getBase();
+        HMODULE hModule = GetModuleHandleA(NULL);
+        if (!hModule)
+            hModule = GetModuleHandleA("Cemu.exe");
+        if (hModule)
+        {
+            Memory::memory_getBaseType memory_getBase = (Memory::memory_getBaseType)GetProcAddress(hModule, "memory_getBase");
+            if (memory_getBase)
+            {
+                base_addr = (uint64_t)memory_getBase();
+            }
+        }
     }
 
     return base_addr;
@@ -14,15 +38,19 @@ uint64_t Memory::getBaseAddress()
 
 DWORD Memory::read_memory(uint64_t Addr, const char* caller)
 {
-    return *(DWORD*)(Addr);
+    DWORD val = 0;
+    if (!SafeCopy(&val, (const void*)Addr, sizeof(val)))
+    {
+        Logging::LoggerService::LogWarning("Access violation in read_memory", caller);
+        return 0;
+    }
+    return val;
 }
 
 void Memory::ValidateAddress(uint64_t address)
 {
-
-    if (address < base_addr)
-        throw std::invalid_argument("");
-
+    if (base_addr != 0 && address < base_addr)
+        throw std::invalid_argument("Address below base_addr");
 }
 
 int Memory::swap_Endian(int number)
@@ -37,275 +65,129 @@ int Memory::swap_Endian(int number)
 
 std::vector<BYTE> Memory::read_bytes(uint64_t Addr, int bytes, const char* caller)
 {
-    
-    try
+    if (bytes <= 0 || bytes > 0x1000000)
+        return {};
+
+    std::vector<BYTE> bytesRead(bytes, 0);
+    if (!SafeCopy(bytesRead.data(), (const void*)Addr, bytes))
     {
-
-        std::vector<BYTE> bytesRead;
-
-        for (int i = 0; i < bytes; i++)
-        {
-            bytesRead.push_back(*(BYTE*)(Addr + i));
-        }
-
-        return bytesRead;
+        Logging::LoggerService::LogWarning("Access violation in read_bytes", caller);
+        return {};
     }
-    catch (...)
-    {
-
-        char Message[100];
-
-        strcpy_s(Message, caller);
-        strcat_s(Message, " -> ");
-        strcat_s(Message, __FUNCTION__);
-
-        Logging::LoggerService::LogError("Failed to read bytes.", Message);
-
-        exit(1);
-    }
-
+    return bytesRead;
 }
 
 float Memory::read_bigEndianFloat(uint64_t Addr, const char* caller)
 {
-    try
+    DWORD result = 0;
+    if (!SafeCopy(&result, (const void*)Addr, sizeof(result)))
     {
-        float bigf;
-        DWORD result = *(DWORD*)(Addr);
-        int swapped_value = Memory::swap_Endian(int(result));
-        memcpy(&bigf, &swapped_value, 4);
-        return bigf;
+        Logging::LoggerService::LogWarning("Access violation in read_bigEndianFloat", caller);
+        return 0.0f;
     }
-    catch (...)
-    {
-
-        char Message[100];
-
-        strcpy_s(Message, caller);
-        strcat_s(Message, " -> ");
-        strcat_s(Message, __FUNCTION__);
-
-        Logging::LoggerService::LogError("Failed to read float.", Message);
-
-        exit(1);
-    }
+    int swapped_value = Memory::swap_Endian(int(result));
+    float bigf = 0.0f;
+    memcpy(&bigf, &swapped_value, 4);
+    return bigf;
 }
 
 int Memory::read_bigEndian4Bytes(uint64_t Addr, const char* caller)
 {
-    try 
+    DWORD val = 0;
+    if (!SafeCopy(&val, (const void*)Addr, sizeof(val)))
     {
-        return Memory::swap_Endian(int(*(DWORD*)(Addr)));
+        Logging::LoggerService::LogWarning("Access violation in read_bigEndian4Bytes", caller);
+        return 0;
     }
-    catch (...)
-    {
-
-        char Message[100];
-
-        strcpy_s(Message, caller);
-        strcat_s(Message, " -> ");
-        strcat_s(Message, __FUNCTION__);
-
-        Logging::LoggerService::LogError("Failed to read 4 bytes.", Message);
-
-        exit(1);
-    }
+    return Memory::swap_Endian(int(val));
 }
 
 int Memory::read_bigEndian4BytesOffset(uint64_t Offset, const char* caller)
 {
-    try
-    {
-        return Memory::swap_Endian(int(*(DWORD*)(Offset + getBaseAddress())));
-    }
-    catch (...)
-    {
-
-        char Message[100];
-
-        strcpy_s(Message, caller);
-        strcat_s(Message, " -> ");
-        strcat_s(Message, __FUNCTION__);
-
-        Logging::LoggerService::LogError("Failed to read 4 bytes.", Message);
-
-        exit(1);
-    }
+    uint64_t base = getBaseAddress();
+    if (base == 0)
+        return 0;
+    return Memory::read_bigEndian4Bytes(Offset + base, caller);
 }
 
 std::string Memory::read_string(uint64_t Addr, int bytes, const char* caller)
 {
-    try
+    if (bytes <= 0 || bytes > 4096)
+        bytes = 50;
+
+    std::vector<char> buf(bytes + 1, 0);
+    if (!SafeCopy(buf.data(), (const void*)Addr, bytes))
     {
-
-        std::vector<BYTE> bytesRead = Memory::read_bytes(Addr, bytes, __FUNCTION__);
-
-    std::vector<BYTE>::iterator endString = std::find(bytesRead.begin(), bytesRead.end(), 0x00);
-
-        if (endString != bytesRead.end())
-        {
-            bytesRead.erase(endString, bytesRead.end());
-        }
-
-        std::string stringRead(bytesRead.begin(), bytesRead.end());
-
-        return stringRead;
+        Logging::LoggerService::LogWarning("Access violation in read_string", caller);
+        return "";
     }
-    catch (...)
-    {
-
-        char Message[100];
-
-        strcpy_s(Message, caller);
-        strcat_s(Message, " -> ");
-        strcat_s(Message, __FUNCTION__);
-
-        Logging::LoggerService::LogError("Failed to read string.", Message);
-
-        exit(1);
-    }
-
+    buf[bytes] = '\0';
+    return std::string(buf.data());
 }
 
 void Memory::write_bigEndianFloat(uint64_t Addr, float value, const char* caller)
 {
-    try
+    int val_int = 0;
+    memcpy(&val_int, &value, 4);
+    DWORD swapped = (DWORD)Memory::swap_Endian(val_int);
+    if (!SafeCopy((void*)Addr, &swapped, sizeof(swapped)))
     {
-
-        int val_int;
-        memcpy(&val_int, &value, 4);
-        *(DWORD*)(Addr) = (DWORD)Memory::swap_Endian(val_int);
+        Logging::LoggerService::LogWarning("Access violation in write_bigEndianFloat", caller);
     }
-    catch (...)
-    {
-
-        char Message[100];
-
-        strcpy_s(Message, caller);
-        strcat_s(Message, " -> ");
-        strcat_s(Message, __FUNCTION__);
-
-        Logging::LoggerService::LogError("Failed to write float.", Message);
-
-        exit(1);
-    }
-
 }
 
 void Memory::write_bigEndian4Bytes(uint64_t Addr, int value, const char* caller)
 {
-    try
+    DWORD swapped = (DWORD)Memory::swap_Endian(value);
+    if (!SafeCopy((void*)Addr, &swapped, sizeof(swapped)))
     {
-        *(DWORD*)(Addr) = (DWORD)Memory::swap_Endian(value);
+        Logging::LoggerService::LogWarning("Access violation in write_bigEndian4Bytes", caller);
     }
-    catch (...)
-    {
-
-        char Message[100];
-
-        strcpy_s(Message, caller);
-        strcat_s(Message, " -> ");
-        strcat_s(Message, __FUNCTION__);
-
-        Logging::LoggerService::LogError("Failed to write 4 bytes.", Message);
-
-        exit(1);
-    }
-
 }
 
 void Memory::write_byte(uint64_t Addr, BYTE byte, const char* caller)
 {
-    try
+    if (!SafeCopy((void*)Addr, &byte, sizeof(byte)))
     {
-        *(BYTE*)(Addr) = byte;
+        Logging::LoggerService::LogWarning("Access violation in write_byte", caller);
     }
-    catch (...)
-    {
-
-        char Message[100];
-
-        strcpy_s(Message, caller);
-        strcat_s(Message, " -> ");
-        strcat_s(Message, __FUNCTION__);
-
-        Logging::LoggerService::LogError("Failed to write byte.", Message);
-
-        exit(1);
-    }
-
 }
 
 void Memory::write_bytes(uint64_t Addr, std::vector<BYTE> bytes, const char* caller)
 {
-    try
+    if (bytes.empty())
+        return;
+
+    if (!SafeCopy((void*)Addr, bytes.data(), bytes.size()))
     {
-        for (int i = 0; i < bytes.size(); i++)
-        {
-            *(BYTE*)(Addr + i) = bytes[i];
-        }
+        Logging::LoggerService::LogWarning("Access violation in write_bytes", caller);
     }
-    catch (...)
-    {
-
-        char Message[100];
-
-        strcpy_s(Message, caller);
-        strcat_s(Message, " -> ");
-        strcat_s(Message, __FUNCTION__);
-
-        Logging::LoggerService::LogError("Failed to write bytes.", Message);
-
-        exit(1);
-    }
-
 }
 
 void Memory::write_string(uint64_t Addr, std::string string, int bytes, const char* caller)
 {
-    try
+    if (bytes == 0)
+        bytes = (int)string.size();
+
+    if (bytes > 0)
     {
-        if (bytes == 0)
-            bytes = string.size();
-
-        if (bytes != 0)
+        std::vector<BYTE> buf(bytes, 0);
+        size_t toCopy = (size_t)bytes < string.size() ? (size_t)bytes : string.size();
+        memcpy(buf.data(), string.data(), toCopy);
+        if (!SafeCopy((void*)Addr, buf.data(), bytes))
         {
-            for (int i = 0; i < bytes; i++)
-            {
-                BYTE byteToWrite = 0x00;
-
-                if (i < string.size())
-                    byteToWrite = string[i];
-
-                *(BYTE*)(Addr + i) = byteToWrite;
-            }
+            Logging::LoggerService::LogWarning("Access violation in write_string", caller);
         }
     }
-    catch (...)
-    {
-
-        char Message[100];
-
-        strcpy_s(Message, caller);
-        strcat_s(Message, " -> ");
-        strcat_s(Message, __FUNCTION__);
-
-        Logging::LoggerService::LogError("Failed to write string.", Message);
-
-        exit(1);
-    }
-
 }
 
 std::vector<BYTE> Memory::getNop(int length)
 {
     std::vector<BYTE> result;
-
     for (int i = 0; i < length; i++)
     {
         result.push_back(0x90);
     }
-
     return result;
 }
 
@@ -313,11 +195,10 @@ std::string Memory::hexStr(std::vector<BYTE> data)
 {
     std::stringstream ss;
     ss << std::hex;
-    for (int i = 0; i < data.size(); i++)
+    for (size_t i = 0; i < data.size(); i++)
     {
         ss << std::setw(2) << std::setfill('0') << (int)data[i];
     }
-
     return ss.str();
 }
 
@@ -325,34 +206,25 @@ std::string Memory::extractLocName(uint64_t Addr, int bytes)
 {
     std::string locString = Memory::read_string(Addr, bytes, __FUNCTION__);
     std::string result = "";
-
-    for (int i = 0; i < locString.size(); i++)
+    for (size_t i = 0; i < locString.size(); i++)
     {
         if (locString[i] == ' ')
         {
-            if (i == 0)
-            {
-                result = " ";
-            }
-
+            result = " ";
             break;
         }
-
         result += locString[i];
     }
-
     return result;
 }
 
 bool Memory::CompareSignatures(std::vector<BYTE> First, std::vector<BYTE> Second, std::vector<int> WildCards)
 {
-    for (int i = 0; i < First.size(); i++)
+    for (size_t i = 0; i < First.size(); i++)
     {
-        if (std::find(WildCards.begin(), WildCards.end(), i) != WildCards.end()) continue;
-
-        if (First[i] != Second[i]) return false;
+        if (std::find(WildCards.begin(), WildCards.end(), (int)i) != WildCards.end()) continue;
+        if (i >= Second.size() || First[i] != Second[i]) return false;
     }
-
     return true;
 }
 
@@ -360,19 +232,33 @@ uint64_t Memory::ReadPointers(uint64_t InitialAddress, std::vector<int> readingO
 {
     uint64_t response = InitialAddress;
 
-    for (int i = 0; i < readingOffsets.size(); i++)
+    for (size_t i = 0; i < readingOffsets.size(); i++)
     {
-        try 
-        {
-            response = read_bigEndian4BytesOffset(response + readingOffsets[i], __FUNCTION__);
-            if (response == 0) return 0;
-        }
-        catch (...)
-        {
-            std::cout << "[WRN] Couldn't read pointer at position " << i << " tried to read offset " << std::hex << response + readingOffsets[i] << std::endl;
-            return 0;
-        }
+        response = read_bigEndian4BytesOffset(response + readingOffsets[i], __FUNCTION__);
+        if (response == 0) return 0;
     }
 
     return response + (IncludeBaseAddress ? getBaseAddress() : 0);
+}
+
+uint64_t Memory::FindLocalLinkActor()
+{
+    uint64_t base = getBaseAddress();
+    if (base == 0) return 0;
+
+    std::vector<int> sig = { 'G', 'a', 'm', 'e', 'R', 'O', 'M', 'P', 'l', 'a', 'y', 'e', 'r', 0 };
+    std::vector<uint64_t> matches = PatternScanMultiple(sig, base, 8, 0, false, 0, 10);
+    for (uint64_t strAddr : matches)
+    {
+        if (strAddr < base + 0x10) continue;
+        uint64_t candidateVirtualAddr = (strAddr - 0x10) - base;
+        if (candidateVirtualAddr < 0x1000) continue;
+
+        uint64_t posAddr = ReadPointers(candidateVirtualAddr, { 0x3A0, 0x50, 0x4, 0x80, 0x0, 0x5C, 0x18 }, true) + 0x50;
+        if (posAddr >= 30000)
+        {
+            return candidateVirtualAddr;
+        }
+    }
+    return 0;
 }

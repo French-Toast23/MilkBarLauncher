@@ -1,6 +1,7 @@
-﻿using Breath_of_the_Wild_Multiplayer.MVVM.Model;
+using Breath_of_the_Wild_Multiplayer.MVVM.Model;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -38,6 +39,11 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
             }
             catch (Exception ex)
             {
+                try
+                {
+                    File.WriteAllText("ErrorStack.txt", ex.ToString());
+                }
+                catch { }
                 SharedData.LoadErrorMessage(ex.Message);
             }
         }

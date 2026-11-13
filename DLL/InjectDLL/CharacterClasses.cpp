@@ -469,29 +469,28 @@ void Link_class::reduceHealth(int healthToReduce)
 
 rapidjson::Document Link_class::readWeaponDamages()
 {
-
-    char* appdata = nullptr;
-    size_t sz = 0;
-
-    _dupenv_s(&appdata, &sz, "APPDATA");
-
-    std::string str(appdata);
-
-    std::string filepath = "\\BOTWM\\WeaponDamages.txt";
-
-    std::ifstream file(appdata + filepath);
-
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-
     rapidjson::Document doc;
-    doc.Parse(buffer.str().c_str());
+    try
+    {
+        char* appdata = nullptr;
+        size_t sz = 0;
+        if (_dupenv_s(&appdata, &sz, "APPDATA") == 0 && appdata != nullptr)
+        {
+            std::string filepath = std::string(appdata) + "\\BOTWM\\WeaponDamages.txt";
+            free(appdata);
 
-    rapidjson::StringBuffer buf;
-    rapidjson::Writer<rapidjson::StringBuffer> writer(buf);
-
-    doc.Accept(writer);
-
+            std::ifstream file(filepath);
+            if (file.is_open())
+            {
+                std::stringstream buffer;
+                buffer << file.rdbuf();
+                doc.Parse(buffer.str().c_str());
+            }
+        }
+    }
+    catch (...)
+    {
+    }
     return doc;
 }
 

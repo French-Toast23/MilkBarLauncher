@@ -1,4 +1,4 @@
-﻿using Breath_of_the_Wild_Multiplayer.Source_files;
+using Breath_of_the_Wild_Multiplayer.Source_files;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -53,9 +53,23 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
         }
 
         public RelayCommand discordButton { get; set; }
-        public RelayCommand bcmlButton { get; set; }
+        public RelayCommand cemuButton { get; set; }
+        public RelayCommand bcmlButton => cemuButton;
 
-        static private string BackgroundsPath = Directory.GetCurrentDirectory() + "/Backgrounds/";
+        public string CemuLocationTooltip
+        {
+            get
+            {
+                if (!string.IsNullOrEmpty(Properties.Settings.Default.cemuLocation))
+                    return Properties.Settings.Default.cemuLocation;
+                string resolved = Source_files.BcmlSettings.ResolveCemuDir();
+                if (!string.IsNullOrEmpty(resolved))
+                    return resolved;
+                return "Click to select your Cemu.exe or Cemu folder";
+            }
+        }
+
+        static private string BackgroundsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Backgrounds");
         List<Background> Backgrounds = new List<Background>();
         int index = -1;
 
@@ -146,17 +160,39 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
                 Process.Start(new ProcessStartInfo("https://discord.gg/sqeKHhBJse") { UseShellExecute=true});
             });
 
-            bcmlButton = new RelayCommand(o =>
+            cemuButton = new RelayCommand(o =>
             {
+                string initDir = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                if (!string.IsNullOrEmpty(Properties.Settings.Default.cemuLocation) && File.Exists(Properties.Settings.Default.cemuLocation))
+                    initDir = Path.GetDirectoryName(Properties.Settings.Default.cemuLocation);
+                else
+                {
+                    string resolved = Source_files.BcmlSettings.ResolveCemuDir();
+                    if (!string.IsNullOrEmpty(resolved) && Directory.Exists(resolved))
+                        initDir = resolved;
+                }
+
                 OpenFileDialog openFileDialog = new OpenFileDialog()
                 {
-                    InitialDirectory = string.IsNullOrEmpty(Properties.Settings.Default.bcmlLocation) ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) : Path.GetDirectoryName(Properties.Settings.Default.bcmlLocation)
+                    Title = "Select Cemu.exe or Cemu directory",
+                    Filter = "Cemu Executable (Cemu.exe)|Cemu.exe;cemu.exe|BCML Settings (settings.json)|settings.json|All files (*.*)|*.*",
+                    InitialDirectory = initDir
                 };
 
-                if (openFileDialog.ShowDialog()!.Value)
+                if (openFileDialog.ShowDialog() == true)
                 {
-                    Properties.Settings.Default.bcmlLocation = openFileDialog.FileName;
+                    string chosen = openFileDialog.FileName;
+                    if (Path.GetFileName(chosen).Equals("settings.json", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Properties.Settings.Default.bcmlLocation = chosen;
+                    }
+                    else
+                    {
+                        Properties.Settings.Default.cemuLocation = chosen;
+                    }
                     Properties.Settings.Default.Save();
+                    OnPropertyChanged(nameof(CemuLocationTooltip));
+                    SharedData.ServerBrowser?.LoadServers();
                 }
             });
         }
@@ -228,9 +264,22 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
             Properties.Settings.Default.actualBackground = $"{Properties.Settings.Default.backgroundDir}\\{Properties.Settings.Default.background}{Properties.Settings.Default.backgroundExt}";
         }
 
-        public IEnumerable<Background> FindBackgrounds(string path, List<string> extensions) => Directory.EnumerateFiles(path, "*.*", SearchOption.AllDirectories)
-                                                                                                  .Where(file => extensions.IndexOf(Path.GetExtension(file)) >= 0)
-                                                                                                  .Select(file => new Background() { Path = Path.GetDirectoryName(file), Filename = Path.GetFileNameWithoutExtension(file), Extension = Path.GetExtension(file) });
+        public IEnumerable<Background> FindBackgrounds(string path, List<string> extensions)
+        {
+            if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
+                return Enumerable.Empty<Background>();
+
+            try
+            {
+                return Directory.EnumerateFiles(path, "*.*", SearchOption.AllDirectories)
+                    .Where(file => extensions.IndexOf(Path.GetExtension(file)) >= 0)
+                    .Select(file => new Background() { Path = Path.GetDirectoryName(file), Filename = Path.GetFileNameWithoutExtension(file), Extension = Path.GetExtension(file) });
+            }
+            catch
+            {
+                return Enumerable.Empty<Background>();
+            }
+        }
 
         private async void timer_Tick(object sender, EventArgs e) 
         {

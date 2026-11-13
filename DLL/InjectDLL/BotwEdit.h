@@ -28,26 +28,41 @@ public:
 		memcpy(&val, &dst.val, sizeof(val));
 	}
 
+	static inline bool SafeMemCopy(void* dest, const void* src, size_t size) {
+		__try {
+			memcpy(dest, src, size);
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER) {
+			return false;
+		}
+	}
+
 	template <typename T>
 	void memory_readMemory(uint64_t offset, T* outPtr, uint64_t baseAddress) {
-		memcpy(outPtr, (void*)(offset + baseAddress), sizeof(T));
+		if (baseAddress == 0 || outPtr == nullptr) return;
+		SafeMemCopy(outPtr, (const void*)(offset + baseAddress), sizeof(T));
 	}
 
 	template <typename T>
 	void memory_readMemoryBE(uint64_t offset, T* outPtr, uint64_t baseAddress) {
-		memcpy(outPtr, (void*)(offset + baseAddress), sizeof(T));
-		memory_swapEndianness(*outPtr);
+		if (baseAddress == 0 || outPtr == nullptr) return;
+		if (SafeMemCopy(outPtr, (const void*)(offset + baseAddress), sizeof(T))) {
+			memory_swapEndianness(*outPtr);
+		}
 	}
 
 	template <typename T>
 	void memory_writeMemory(uint64_t offset, T value, uint64_t baseAddress) {
-		memcpy((void*)(offset + baseAddress), (void*)&value, sizeof(T));
+		if (baseAddress == 0) return;
+		SafeMemCopy((void*)(offset + baseAddress), (const void*)&value, sizeof(T));
 	}
 
 	template <typename T>
 	void memory_writeMemoryBE(uint64_t offset, T value, uint64_t baseAddress) {
+		if (baseAddress == 0) return;
 		memory_swapEndianness(value);
-		memcpy((void*)(offset + baseAddress), (void*)&value, sizeof(T));
+		SafeMemCopy((void*)(offset + baseAddress), (const void*)&value, sizeof(T));
 	}
 
 	template <size_t L>

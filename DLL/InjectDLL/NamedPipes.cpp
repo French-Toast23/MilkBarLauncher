@@ -16,6 +16,7 @@ void namedPipeClass::createServer()
 		if (hPipeTemp == INVALID_HANDLE_VALUE)
 		{
 			tries++;
+			Sleep(10);
 			continue;
 		}
 

@@ -54,6 +54,7 @@
 	// -----------------------------------------
 
 	typedef void (*osLib_registerHLEFunctionType)(const char* libraryName, const char* functionName, void(*osFunction)(PPCInterpreter_t* hCPU));
+	typedef uint32_t (*osLib_getHLEFunctionAddressType)(const char* libraryName, const char* functionName);
 
 
 #pragma pack(1)
@@ -261,48 +262,48 @@ queuedActors.erase(queuedActors.begin());
 }
 
 void mainFn(PPCInterpreter_t* hCPU, uint32_t startTrnsData, uint32_t startRingBuffer, uint32_t endRingBuffer, uint64_t baseAddress) {
-	hCPU->instructionPointer = hCPU->sprNew.LR; // Tell it where to return to - REQUIRED
+	if (!hCPU) return;
+	hCPU->instructionPointer = hCPU->sprNew.LR;
 
-	// This is the stuff I'm currently using to test different values for potential Link coords
-	//MemoryInstance::floatBE* pos = reinterpret_cast<MemoryInstance::floatBE*>(memInstance->baseAddr + 0x10263910);
-	//Console::LogPrint((float)*pos);
+	if (baseAddress == 0 || !memInstance || startTrnsData < 0x1000)
+		return;
 
 	if (!isSetup) {
 		setup(hCPU, startTrnsData, baseAddress);
 		return;
 	}
 
-	//queueActors();
-
-	data_mutex.lock_shared(); /////////////////////////////////////////////////////////////////////
-	// Get our transferrable data
+	data_mutex.lock_shared();
 	TransferableData trnsData;
 	memInstance->memory_readMemoryBE(startTrnsData, &trnsData, baseAddress);
 
-	// Get our instance data
 	uint32_t startInstData = trnsData.ringPtr;
 	InstanceData instData;
 	memInstance->memory_readMemoryBE(startInstData, &instData, baseAddress);
-	data_mutex.unlock_shared(); //==================================================================
+	data_mutex.unlock_shared();
 
-	trnsData.interceptRegisters = true; // Just make sure to intercept stuff.. if we don't do this all the time when you warp somewhere else spawns cause it to crash
+	trnsData.interceptRegisters = true;
 
-	queue_mutex.lock(); ////////////////////////////////////////////
-	// Actual actor spawning - just read from queue here.
+	queue_mutex.lock();
 	if (queuedActors.size() >= 1) {
 		setupActor(hCPU, trnsData, instData, startRingBuffer, endRingBuffer, baseAddress);
 	}
-	queue_mutex.unlock(); //========================================
+	queue_mutex.unlock();
 
-	data_mutex.lock(); ////////////////////////////////////////////////////////////////////
+	data_mutex.lock();
 	memInstance->memory_writeMemoryBE(startTrnsData, trnsData, baseAddress);
-	data_mutex.unlock(); //==================================================================
+	data_mutex.unlock();
 }
 
-// A wrapper function to set the params in a more cpp-friendly way
 void mainFn(PPCInterpreter_t* hCPU) {
-
-	hCPU->instructionPointer = hCPU->sprNew.LR; // Tell it where to return to - REQUIRED
+	if (!hCPU) return;
+	hCPU->instructionPointer = hCPU->sprNew.LR;
+	static bool s_loggedMainFn = false;
+	if (!s_loggedMainFn) {
+		s_loggedMainFn = true;
+		Logging::LoggerService::LogInformation("mainFn HLE invoked by Cemu.");
+	}
+	if (Main::baseAddr == 0) return;
 	mainFn(hCPU, hCPU->gpr[3], hCPU->gpr[4], hCPU->gpr[5], Main::baseAddr);
 }
 
@@ -322,8 +323,16 @@ enum Weather : uint32_t
 Weather newWeather = (Weather)0;
 
 void WeatherFn(PPCInterpreter_t* hCPU) {
-
+	if (!hCPU) return;
 	hCPU->instructionPointer = hCPU->sprNew.LR;
+	static bool s_loggedWeather = false;
+	if (!s_loggedWeather) {
+		s_loggedWeather = true;
+		Logging::LoggerService::LogInformation("WeatherFn HLE invoked by Cemu.");
+	}
+
+	if (Main::baseAddr == 0 || !memInstance || !Game::GameInstance || !Game::GameInstance->World)
+		return;
 
 	Game::GameInstance->World->LocalWeather = (int)(Weather)hCPU->gpr[26];
 	newWeather = (Weather)Game::GameInstance->World->Weather;
@@ -344,9 +353,25 @@ bool started = false;
 
 void OnActorCreate(PPCInterpreter_t* hCPU)
 {
+	if (!hCPU) return;
 	hCPU->instructionPointer = hCPU->sprNew.LR;
 
+	if (Main::baseAddr == 0)
+		Main::baseAddr = Memory::getBaseAddress();
+
+	if (Main::baseAddr == 0 || hCPU->gpr[3] < 0x1000)
+		return;
+
 	std::string name = Memory::read_string(Main::baseAddr + hCPU->gpr[3] + 0x10, 100, __FUNCTION__);
+	if (name.empty())
+		return;
+
+	static int s_actorLogCount = 0;
+	if (s_actorLogCount < 25 || name.rfind("GameROMPlayer") != std::string::npos || name.rfind("Jugador", 0) == 0)
+	{
+		s_actorLogCount++;
+		Logging::LoggerService::LogInformation("OnActorCreate: actor '" + name + "' at 0x" + std::to_string(hCPU->gpr[3]));
+	}
 
 	std::vector<std::string> BombChoices = { "CustomRemoteBomb", "CustomRemoteBomb2", "CustomRemoteBombCube", "CustomRemoteBombCube2" };
 
@@ -360,54 +385,67 @@ void OnActorCreate(PPCInterpreter_t* hCPU)
 	if (name.rfind("GameROMPlayer") != std::string::npos)
 	{
 		std::stringstream stream;
-		stream << "Link: " << std::hex << hCPU->gpr[3];
-		Logging::LoggerService::LogDebug(stream.str());
-		Game::GameInstance->setAddress(hCPU->gpr[3]);
+		stream << "Link detected at: 0x" << std::hex << hCPU->gpr[3];
+		Logging::LoggerService::LogInformation(stream.str());
+		Main::s_LocalLinkAddr = hCPU->gpr[3];
+		if (Game::GameInstance)
+			Game::GameInstance->setAddress(hCPU->gpr[3]);
 	}
 
 	if (name.rfind("Jugador", 0) == 0)
 	{
-		int spawnedPlayer = std::stoi(name.replace(0, 7, ""));
+		try
+		{
+			int spawnedPlayer = std::stoi(name.substr(7));
 
-		std::stringstream stream;
-		stream << "Spawned player " << spawnedPlayer << " at: " << std::hex << Main::baseAddr + hCPU->gpr[3] << ". Setting up addresses.";
-		Logging::LoggerService::LogDebug(stream.str(), __FUNCTION__);
+			std::stringstream stream;
+			stream << "Spawned player " << spawnedPlayer << " at: " << std::hex << Main::baseAddr + hCPU->gpr[3] << ". Setting up addresses.";
+			Logging::LoggerService::LogDebug(stream.str(), __FUNCTION__);
 
-		Instances::PlayerList[spawnedPlayer]->setAddress(hCPU->gpr[3]);
-		Instances::PlayerList[spawnedPlayer]->Equipment->SetWeapons(hCPU->gpr[3]);
-		Instances::PlayerList[spawnedPlayer]->Bumii->setAddress(hCPU->gpr[3]);
+			if (Instances::PlayerList.find(spawnedPlayer) != Instances::PlayerList.end() && Instances::PlayerList[spawnedPlayer])
+			{
+				Instances::PlayerList[spawnedPlayer]->setAddress(hCPU->gpr[3]);
+				if (Instances::PlayerList[spawnedPlayer]->Equipment)
+					Instances::PlayerList[spawnedPlayer]->Equipment->SetWeapons(hCPU->gpr[3]);
+				if (Instances::PlayerList[spawnedPlayer]->Bumii)
+					Instances::PlayerList[spawnedPlayer]->Bumii->setAddress(hCPU->gpr[3]);
 
-		Logging::LoggerService::LogDebug("Player " + std::to_string(spawnedPlayer) + " setup correctly.", __FUNCTION__);
+				Logging::LoggerService::LogDebug("Player " + std::to_string(spawnedPlayer) + " setup correctly.", __FUNCTION__);
+			}
+		}
+		catch (...) {}
 	}
 
 	if (name.rfind("Enemy_", 0) == 0)
-		Game::GameInstance->EnemyService->UpdateEnemyAddress(Main::baseAddr + hCPU->gpr[3], true);
+	{
+		if (Game::GameInstance && Game::GameInstance->EnemyService)
+			Game::GameInstance->EnemyService->UpdateEnemyAddress(Main::baseAddr + hCPU->gpr[3], true);
+	}
 
-	if (!started) return;
+	if (!started || !Game::GameInstance) return;
 
-	if (name == "RemoteBomb")
+	if (name == "RemoteBomb" && Game::GameInstance->Bomb)
 	{
 		Game::GameInstance->Bomb->setAddress(hCPU->gpr[3], __FUNCTION__);
 		Game::GameInstance->Bomb->changeState(Normal);
 	}
-	else if (name == "RemoteBomb2")
+	else if (name == "RemoteBomb2" && Game::GameInstance->Bomb2)
 	{
 		Game::GameInstance->Bomb2->setAddress(hCPU->gpr[3], __FUNCTION__);
 		Game::GameInstance->Bomb2->changeState(Normal);
 	}
-	else if (name == "RemoteBombCube")
+	else if (name == "RemoteBombCube" && Game::GameInstance->BombCube)
 	{
 		Game::GameInstance->BombCube->setAddress(hCPU->gpr[3], __FUNCTION__);
 		Game::GameInstance->BombCube->changeState(Normal);
 	}
-	else if (name == "RemoteBombCube2")
+	else if (name == "RemoteBombCube2" && Game::GameInstance->BombCube2)
 	{
 		Game::GameInstance->BombCube2->setAddress(hCPU->gpr[3], __FUNCTION__);
 		Game::GameInstance->BombCube2->changeState(Normal);
 	}
 
 	int BombType = -1;
-	
 	for (int i = 0; i < 4; i++)
 	{
 		if (name == BombChoices[i])
@@ -419,11 +457,10 @@ void OnActorCreate(PPCInterpreter_t* hCPU)
 
 	for (int j = 1; j < 33; j++)
 	{
-		if (!Instances::PlayerList[j]->connected)
+		if (Instances::PlayerList.find(j) == Instances::PlayerList.end() || !Instances::PlayerList[j] || !Instances::PlayerList[j]->connected)
 			continue;
 
-		BombAccess* Bomb = new BombAccess();
-
+		BombAccess* Bomb = nullptr;
 		if (BombType == 0)
 			Bomb = Instances::PlayerList[j]->Bomb;
 		else if (BombType == 1)
@@ -433,7 +470,7 @@ void OnActorCreate(PPCInterpreter_t* hCPU)
 		else if (BombType == 3)
 			Bomb = Instances::PlayerList[j]->BombCube2;
 
-		if (Bomb->getStatus() == Processing)
+		if (Bomb && Bomb->getStatus() == Processing)
 		{
 			Bomb->setAddress(hCPU->gpr[3], __FUNCTION__);
 			Bomb->changeState(Normal);
@@ -447,52 +484,76 @@ void OnActorCreate(PPCInterpreter_t* hCPU)
 
 void OnActorErase(PPCInterpreter_t* hCPU)
 {
-
+	if (!hCPU) return;
 	hCPU->instructionPointer = hCPU->sprNew.LR;
 
+	if (Main::baseAddr == 0)
+		Main::baseAddr = Memory::getBaseAddress();
+
+	if (Main::baseAddr == 0 || hCPU->gpr[3] < 0x1000)
+		return;
+
 	std::string name = Memory::read_string(Main::baseAddr + hCPU->gpr[3] + 0x10, 100, __FUNCTION__);
+	if (name.empty())
+		return;
+
+	if (name.rfind("GameROMPlayer") != std::string::npos)
+	{
+		Logging::LoggerService::LogInformation("Link actor erased.", __FUNCTION__);
+		Main::s_LocalLinkAddr = 0;
+		if (Game::GameInstance)
+			Game::GameInstance->setAddress(0);
+	}
 
 	std::vector<std::string> BombChoices = {"CustomRemoteBomb", "CustomRemoteBomb2", "CustomRemoteBombCube", "CustomRemoteBombCube2"};
-	std::vector<std::string> RealBombChoices = { "RemoteBomb", "RemoteBomb2", "RemoteBombCube", "RemoteBombCube2" };
 
 	if (name.rfind("Jugador", 0) == 0) {
-		int spawnedPlayer = std::stoi(name.replace(0, 7, ""));
-		//Instances::PlayerList[spawnedPlayer]->Delete->set(false, __FUNCTION__);
-		Instances::PlayerList[spawnedPlayer]->Status->set(0, __FUNCTION__);
-		Instances::PlayerList[spawnedPlayer]->setAddress(0);
-		std::stringstream stream;
-		stream << "Player " << spawnedPlayer << " erased.";
-		Logging::LoggerService::LogDebug(stream.str(), __FUNCTION__);
+		try
+		{
+			int spawnedPlayer = std::stoi(name.substr(7));
+			if (Instances::PlayerList.find(spawnedPlayer) != Instances::PlayerList.end() && Instances::PlayerList[spawnedPlayer])
+			{
+				if (Instances::PlayerList[spawnedPlayer]->Status)
+					Instances::PlayerList[spawnedPlayer]->Status->set(0, __FUNCTION__);
+				Instances::PlayerList[spawnedPlayer]->setAddress(0);
+				std::stringstream stream;
+				stream << "Player " << spawnedPlayer << " erased.";
+				Logging::LoggerService::LogDebug(stream.str(), __FUNCTION__);
+			}
+		}
+		catch (...) {}
 	}
 
 	if (name.rfind("Enemy_", 0) == 0)
-		Game::GameInstance->EnemyService->UpdateEnemyAddress(Main::baseAddr + hCPU->gpr[3], false);
+	{
+		if (Game::GameInstance && Game::GameInstance->EnemyService)
+			Game::GameInstance->EnemyService->UpdateEnemyAddress(Main::baseAddr + hCPU->gpr[3], false);
+	}
 
-	if (!started) return;
+	if (!started || !Game::GameInstance) return;
 
-	if (name == "RemoteBomb")
+	if (name == "RemoteBomb" && Game::GameInstance->Bomb)
 	{
 		Game::GameInstance->Bomb->setAddress(0, __FUNCTION__);
 		Game::GameInstance->Bomb->changeState(Cancelled);
 	}
-	else if (name == "RemoteBomb2")
+	else if (name == "RemoteBomb2" && Game::GameInstance->Bomb2)
 	{
 		Game::GameInstance->Bomb2->setAddress(0, __FUNCTION__);
 		Game::GameInstance->Bomb2->changeState(Cancelled);
 	}
-	else if (name == "RemoteBombCube")
+	else if (name == "RemoteBombCube" && Game::GameInstance->BombCube)
 	{
 		Game::GameInstance->BombCube->setAddress(0, __FUNCTION__);
 		Game::GameInstance->BombCube->changeState(Cancelled);
 	}
-	else if (name == "RemoteBombCube2")
+	else if (name == "RemoteBombCube2" && Game::GameInstance->BombCube2)
 	{
 		Game::GameInstance->BombCube2->setAddress(0, __FUNCTION__);
 		Game::GameInstance->BombCube2->changeState(Cancelled);
 	}
 
 	int BombType = -1;
-
 	for (int i = 0; i < 4; i++)
 	{
 		if (name == BombChoices[i])
@@ -504,11 +565,10 @@ void OnActorErase(PPCInterpreter_t* hCPU)
 
 	for (int j = 1; j < 33; j++)
 	{
-		if (!Instances::PlayerList[j]->connected)
+		if (Instances::PlayerList.find(j) == Instances::PlayerList.end() || !Instances::PlayerList[j] || !Instances::PlayerList[j]->connected)
 			continue;
 
-		BombAccess* Bomb = new BombAccess();
-
+		BombAccess* Bomb = nullptr;
 		if (BombType == 0)
 			Bomb = Instances::PlayerList[j]->Bomb;
 		else if (BombType == 1)
@@ -518,7 +578,7 @@ void OnActorErase(PPCInterpreter_t* hCPU)
 		else if (BombType == 3)
 			Bomb = Instances::PlayerList[j]->BombCube2;
 
-		if (Bomb->BaseAddr == hCPU->gpr[3])
+		if (Bomb && Bomb->BaseAddr == hCPU->gpr[3])
 		{
 			Bomb->setAddress(0, __FUNCTION__);
 			Bomb->changeState(Deallocated);
@@ -528,91 +588,48 @@ void OnActorErase(PPCInterpreter_t* hCPU)
 			return;
 		}
 	}
-
-	//for (int i = 0; i < 4; i++)
-	//{
-
-	//	if (std::string(name).rfind(BombChoices[i], 0) == 0)
-	//	{
-
-	//		for (int j = 0; j < Main::BombSync->BombAvailableAddresses[i].size(); j++)
-	//		{
-
-	//			if (Main::BombSync->BombAvailableAddresses[i][j] == hCPU->gpr[4])
-	//			{
-
-	//				Main::BombSync->OtherPlayerBombsMutex.lock();
-	//				Main::BombSync->BombAvailableAddresses[i].erase(Main::BombSync->BombAvailableAddresses[i].begin() + j);
-	//				Main::BombSync->OtherPlayerBombsMutex.unlock();
-	//				std::cout << BombChoices[i] << " cleared" << std::endl;
-
-	//			}
-
-	//		}
-
-	//	}
-
-	//	for (int i = 0; i < 4; i++)
-	//	{
-
-	//		for (int j = 0; j < RealBombChoices.size(); j++)
-	//		{
-
-	//			if (Main::Jugadores[i]->UserBombs[RealBombChoices[j]]->BaseAddress == hCPU->gpr[3])
-	//			{
-
-	//				Main::BombSync->BombExplodeMutex.lock();
-
-	//				Main::Jugadores[i]->UserBombs[RealBombChoices[j]]->Exists = false;
-	//				Main::Jugadores[i]->UserBombs[RealBombChoices[j]]->BaseAddress = 0;
-
-	//				//std::cout << "Bomb " << RealBombChoices[j] << " for Jugador " << i + 1 << " despawned" << std::endl;
-
-	//				Main::BombSync->BombExplodeMutex.unlock();
-
-	//			}
-
-	//		}
-
-	//	}
-
-	//}
-
 }
 
 void remoteBomb_onAICalc(PPCInterpreter_t* hCPU)
 {
+	if (!hCPU) return;
 	hCPU->instructionPointer = hCPU->sprNew.LR;
 
+	if (Main::baseAddr == 0 || !memInstance || hCPU->gpr[3] < 0x1000)
+		return;
+
 	unsigned int aiPtr = hCPU->gpr[3];
-	unsigned int actPtr;
+	unsigned int actPtr = 0;
 	std::vector<std::string> BombChoices = { "CustomRemoteBomb", "CustomRemoteBomb2", "CustomRemoteBombCube", "CustomRemoteBombCube2" };
 
 	memInstance->memory_readMemoryBE(aiPtr, &actPtr, Main::baseAddr);
+	if (actPtr == 0) return;
 
 	std::string name = Memory::read_string(Main::baseAddr + actPtr + 0x10, 50, __FUNCTION__);
 
-	bool explode = Memory::read_bytes(aiPtr + 0x78 + Main::baseAddr, 1, __FUNCTION__)[0] == 0x1 ? true : false;
-	bool cancel = Memory::read_bytes(aiPtr + 0x9C + Main::baseAddr, 1, __FUNCTION__)[0] == 0x1 ? true : false;
+	auto b1 = Memory::read_bytes(aiPtr + 0x78 + Main::baseAddr, 1, __FUNCTION__);
+	auto b2 = Memory::read_bytes(aiPtr + 0x9C + Main::baseAddr, 1, __FUNCTION__);
+	bool explode = (!b1.empty() && b1[0] == 0x1);
+	bool cancel = (!b2.empty() && b2[0] == 0x1);
 
-	if(explode || cancel)
+	if ((explode || cancel) && Game::GameInstance)
 	{
-		if (name == "RemoteBomb")
+		if (name == "RemoteBomb" && Game::GameInstance->Bomb)
 		{
 			Game::GameInstance->Bomb->setAddress(0, __FUNCTION__);
-			Game::GameInstance->Bomb->changeState(explode ? Exploded : Cancelled); // Assuming it can only explode or cancel, not both
+			Game::GameInstance->Bomb->changeState(explode ? Exploded : Cancelled);
 		}
-		else if (name == "RemoteBomb2")
+		else if (name == "RemoteBomb2" && Game::GameInstance->Bomb2)
 		{
 			Game::GameInstance->Bomb2->setAddress(0, __FUNCTION__);
 			Game::GameInstance->Bomb2->changeState(explode ? Exploded : Cancelled);
 		}
-		else if (name == "RemoteBombCube")
+		else if (name == "RemoteBombCube" && Game::GameInstance->BombCube)
 		{
 			Game::GameInstance->BombCube->setAddress(0, __FUNCTION__);
 			Game::GameInstance->BombCube->changeState(explode ? Exploded : Cancelled);
 		}
-		else if (name == "RemoteBombCube2")
+		else if (name == "RemoteBombCube2" && Game::GameInstance->BombCube2)
 		{
 			Game::GameInstance->BombCube2->setAddress(0, __FUNCTION__);
 			Game::GameInstance->BombCube2->changeState(explode ? Exploded : Cancelled);
@@ -620,7 +637,6 @@ void remoteBomb_onAICalc(PPCInterpreter_t* hCPU)
 	}
 
 	int BombType = -1;
-
 	for (int i = 0; i < 4; i++)
 	{
 		if (name == BombChoices[i])
@@ -632,11 +648,10 @@ void remoteBomb_onAICalc(PPCInterpreter_t* hCPU)
 
 	for (int j = 1; j < 33; j++)
 	{
-		if (!Instances::PlayerList[j]->connected)
+		if (Instances::PlayerList.find(j) == Instances::PlayerList.end() || !Instances::PlayerList[j] || !Instances::PlayerList[j]->connected)
 			continue;
 
-		BombAccess* Bomb = new BombAccess();
-
+		BombAccess* Bomb = nullptr;
 		if (BombType == 0)
 			Bomb = Instances::PlayerList[j]->Bomb;
 		else if (BombType == 1)
@@ -646,7 +661,7 @@ void remoteBomb_onAICalc(PPCInterpreter_t* hCPU)
 		else if (BombType == 3)
 			Bomb = Instances::PlayerList[j]->BombCube2;
 
-		if (Bomb->getStatus() == Deallocated)
+		if (!Bomb || Bomb->getStatus() == Deallocated)
 			continue;
 
 		if (Bomb->BaseAddr == actPtr)
@@ -735,26 +750,175 @@ void remoteBomb_onAICalc2(PPCInterpreter_t* hCPU)
 
 void timemgr_OnInit(PPCInterpreter_t* hCPU)
 {
+	if (!hCPU) return;
 	hCPU->instructionPointer = hCPU->sprNew.LR;
+
+	if (Main::baseAddr == 0 || !Game::GameInstance || !Game::GameInstance->World)
+		return;
 
 	Game::GameInstance->World->ReadableTime = new BigEndian<float>(hCPU->gpr[3] + 0x98 + Main::baseAddr, __FUNCTION__);
 	Game::GameInstance->World->WritableTime = new BigEndian<float>(hCPU->gpr[3] + 0xA0 + Main::baseAddr, __FUNCTION__);
-
-	//Game::GameInstance->World->ReadableTime->setAddress(hCPU->gpr[3] + 0x98 + Main::baseAddr, __FUNCTION__, true);
-	//Game::GameInstance->World->WritableTime->setAddress(hCPU->gpr[3] + 0xA0 + Main::baseAddr, __FUNCTION__, true);
-
-	//std::stringstream stream;
-	//stream << "Time offset: " << std::hex << hCPU->gpr[3];
-
-	//Logging::LoggerService::LogDebug(stream.str());
 }
 
 void init() {
-	osLib_registerHLEFunctionType osLib_registerHLEFunction = (osLib_registerHLEFunctionType)GetProcAddress(GetModuleHandleA("Cemu.exe"), "osLib_registerHLEFunction");
-	osLib_registerHLEFunction("spawnactors", "fnCallMain", static_cast<void (*) (PPCInterpreter_t*)>(&mainFn)); // Give our assembly patch something to hook into
-	osLib_registerHLEFunction("multiplayer", "WeatherSync", static_cast<void (*) (PPCInterpreter_t*)>(&WeatherFn)); // Give our assembly patch something to hook into
-	osLib_registerHLEFunction("ukl_actorinterceptor", "OnActorCreate", static_cast<void (*) (PPCInterpreter_t*)>(&OnActorCreate)); // Give our assembly patch something to hook into
-	osLib_registerHLEFunction("ukl_actorinterceptor", "OnActorDeleteLater", static_cast<void (*) (PPCInterpreter_t*)>(&OnActorErase)); // Give our assembly patch something to hook into
+	HMODULE hCemu = GetModuleHandleA(NULL);
+	if (!hCemu) hCemu = GetModuleHandleA("Cemu.exe");
+	if (!hCemu)
+	{
+		Logging::LoggerService::LogError("init(): GetModuleHandle Cemu.exe failed!");
+		return;
+	}
+
+	osLib_registerHLEFunctionType osLib_registerHLEFunction = (osLib_registerHLEFunctionType)GetProcAddress(hCemu, "osLib_registerHLEFunction");
+	if (!osLib_registerHLEFunction)
+	{
+		Logging::LoggerService::LogError("init(): GetProcAddress osLib_registerHLEFunction failed!");
+		return;
+	}
+
+	osLib_registerHLEFunction("spawnactors", "fnCallMain", static_cast<void (*) (PPCInterpreter_t*)>(&mainFn));
+	osLib_registerHLEFunction("multiplayer", "WeatherSync", static_cast<void (*) (PPCInterpreter_t*)>(&WeatherFn));
+	osLib_registerHLEFunction("ukl_actorinterceptor", "OnActorCreate", static_cast<void (*) (PPCInterpreter_t*)>(&OnActorCreate));
+	osLib_registerHLEFunction("ukl_actorinterceptor", "OnActorDeleteLater", static_cast<void (*) (PPCInterpreter_t*)>(&OnActorErase));
+	osLib_registerHLEFunction("ukl_actorinterceptor", "OnActorErase", static_cast<void (*) (PPCInterpreter_t*)>(&OnActorErase));
 	osLib_registerHLEFunction("ukl_remotebombaiinterceptor", "OnCalc", &remoteBomb_onAICalc);
 	osLib_registerHLEFunction("ukl_timemgrinterceptor", "OnInit", &timemgr_OnInit);
+
+	Logging::LoggerService::LogInformation("init(): All HLE interceptors registered successfully.");
 }
+
+void BindHLEAddresses()
+{
+	if (Main::baseAddr == 0)
+		return;
+
+	HMODULE hCemu = GetModuleHandleA(NULL);
+	if (!hCemu) hCemu = GetModuleHandleA("Cemu.exe");
+	if (!hCemu) return;
+
+	osLib_registerHLEFunctionType osLib_registerHLEFunction = (osLib_registerHLEFunctionType)GetProcAddress(hCemu, "osLib_registerHLEFunction");
+	if (!osLib_registerHLEFunction) return;
+
+	osLib_getHLEFunctionAddressType osLib_getHLEFunctionAddress = (osLib_getHLEFunctionAddressType)((char*)osLib_registerHLEFunction + 0x10);
+
+	uint32_t addr_OnActorCreate = osLib_getHLEFunctionAddress("ukl_actorinterceptor", "OnActorCreate");
+	uint32_t addr_OnActorDeleteLater = osLib_getHLEFunctionAddress("ukl_actorinterceptor", "OnActorDeleteLater");
+	uint32_t addr_OnActorErase = osLib_getHLEFunctionAddress("ukl_actorinterceptor", "OnActorErase");
+	uint32_t addr_WeatherSync = osLib_getHLEFunctionAddress("multiplayer", "WeatherSync");
+	uint32_t addr_fnCallMain = osLib_getHLEFunctionAddress("spawnactors", "fnCallMain");
+	uint32_t addr_RemoteBomb = osLib_getHLEFunctionAddress("ukl_remotebombaiinterceptor", "OnCalc");
+	uint32_t addr_TimeMgr = osLib_getHLEFunctionAddress("ukl_timemgrinterceptor", "OnInit");
+
+	static bool s_loggedAddresses = false;
+	if (!s_loggedAddresses)
+	{
+		s_loggedAddresses = true;
+		std::stringstream ss;
+		ss << "BindHLEAddresses: OnActorCreate=0x" << std::hex << addr_OnActorCreate
+			<< ", fnCallMain=0x" << addr_fnCallMain
+			<< ", WeatherSync=0x" << addr_WeatherSync
+			<< ", RemoteBomb=0x" << addr_RemoteBomb
+			<< ", TimeMgr=0x" << addr_TimeMgr;
+		Logging::LoggerService::LogInformation(ss.str());
+	}
+
+	// 1. BotW_UKL_ActorInterceptor_V208 (Codecave default: 0x01808200)
+	if (addr_OnActorCreate >= 0x01000000 && addr_OnActorCreate != 0xFFFFFFFF)
+	{
+		Memory::write_bigEndian4Bytes(Main::baseAddr + 0x0180822c, addr_OnActorCreate, __FUNCTION__);
+		Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01808244, addr_OnActorDeleteLater, __FUNCTION__);
+		Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01808258, addr_OnActorErase, __FUNCTION__);
+
+		int readback = Memory::read_bigEndian4Bytes(Main::baseAddr + 0x0180822c, __FUNCTION__);
+		static bool s_loggedReadback = false;
+		if (!s_loggedReadback)
+		{
+			s_loggedReadback = true;
+			std::stringstream ss;
+			ss << "BindHLEAddresses Readback: OnActorCreate written=0x" << std::hex << addr_OnActorCreate
+				<< ", readback=0x" << readback
+				<< (readback == (int)addr_OnActorCreate ? " (VERIFIED MATCH)" : " (MISMATCH!)");
+			Logging::LoggerService::LogInformation(ss.str());
+		}
+
+		// Dynamic scan around codecave range [0x01800000, 0x01900000]
+		uint8_t* pStart = (uint8_t*)(Main::baseAddr + 0x01800000);
+		const char targetStr[] = "ukl_actorinterceptor";
+		for (size_t offset = 0; offset < 0x20000; offset += 4)
+		{
+			if (memcmp(pStart + offset, targetStr, sizeof(targetStr) - 1) == 0)
+			{
+				uint64_t modBase = Main::baseAddr + 0x01800000 + offset;
+				Memory::write_bigEndian4Bytes(modBase + 0x2C, addr_OnActorCreate, __FUNCTION__);
+				Memory::write_bigEndian4Bytes(modBase + 0x44, addr_OnActorDeleteLater, __FUNCTION__);
+				Memory::write_bigEndian4Bytes(modBase + 0x58, addr_OnActorErase, __FUNCTION__);
+				break;
+			}
+		}
+	}
+
+	// 2. BotW_SpawnActors_V208 (Codecave default: 0x01800000, offset 0x0)
+	if (addr_fnCallMain >= 0x01000000 && addr_fnCallMain != 0xFFFFFFFF)
+	{
+		Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01800000, addr_fnCallMain, __FUNCTION__);
+
+		int readback_main = Memory::read_bigEndian4Bytes(Main::baseAddr + 0x01800000, __FUNCTION__);
+		static bool s_loggedReadbackMain = false;
+		if (!s_loggedReadbackMain)
+		{
+			s_loggedReadbackMain = true;
+			std::stringstream ss;
+			ss << "BindHLEAddresses Readback: fnCallMain written=0x" << std::hex << addr_fnCallMain
+				<< ", readback=0x" << readback_main
+				<< (readback_main == (int)addr_fnCallMain ? " (VERIFIED MATCH)" : " (MISMATCH!)");
+			Logging::LoggerService::LogInformation(ss.str());
+		}
+
+		uint8_t* pStart = (uint8_t*)(Main::baseAddr + 0x01800000);
+		const char targetStr[] = "spawnactors";
+		for (size_t offset = 0; offset < 0x10000; offset += 4)
+		{
+			if (memcmp(pStart + offset, targetStr, sizeof(targetStr) - 1) == 0)
+			{
+				if (offset >= 0x14)
+				{
+					Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01800000 + offset - 0x14, addr_fnCallMain, __FUNCTION__);
+				}
+				break;
+			}
+		}
+	}
+
+	// 3. BotW_MPTesting_V208 (Codecave default: 0x01808a00, offset 0x0)
+	if (addr_WeatherSync >= 0x01000000 && addr_WeatherSync != 0xFFFFFFFF)
+	{
+		Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01808a00, addr_WeatherSync, __FUNCTION__);
+
+		uint8_t* pStart = (uint8_t*)(Main::baseAddr + 0x01800000);
+		const char targetStr[] = "WeatherSync";
+		for (size_t offset = 0; offset < 0x20000; offset += 4)
+		{
+			if (memcmp(pStart + offset, targetStr, sizeof(targetStr) - 1) == 0)
+			{
+				if (offset >= 4)
+				{
+					Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01800000 + offset - 4, addr_WeatherSync, __FUNCTION__);
+				}
+				break;
+			}
+		}
+	}
+
+	// 4. BotW_UKL_RemoteBombAIInterceptor_V208 (Codecave default: 0x01808400, offset 0x28)
+	if (addr_RemoteBomb >= 0x01000000 && addr_RemoteBomb != 0xFFFFFFFF)
+	{
+		Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01808428, addr_RemoteBomb, __FUNCTION__);
+	}
+
+	// 5. BotW_UKL_TimeMgrInterceptor_V208 (Codecave default: 0x01808500, offset 0x24)
+	if (addr_TimeMgr >= 0x01000000 && addr_TimeMgr != 0xFFFFFFFF)
+	{
+		Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01808524, addr_TimeMgr, __FUNCTION__);
+	}
+}
+

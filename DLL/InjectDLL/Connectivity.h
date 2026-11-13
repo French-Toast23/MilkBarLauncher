@@ -30,7 +30,7 @@ namespace Connectivity
         char buffer[7168];
 
     public:
-        void connectToServer(std::string IP, std::string PORT);
+        bool connectToServer(std::string IP, std::string PORT);
         void sendMessage(std::string command, std::string message);
         void sendBytes(byte Message[7168]);
         std::string receive();

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Windows;
 using Breath_of_the_Wild_Multiplayer.Source_files;
 using System.Windows.Media;
@@ -258,7 +258,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.Model
             get
             {
                 if (!isCemuSetup)
-                    return "BCML installation not found";
+                    return "Game or Cemu not found";
                 if (!open)
                     return "Server closed";
                 return "Connect";
@@ -337,9 +337,32 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.Model
             Password = password;
         }
 
+        public static IPAddress ResolveIP(string ipString)
+        {
+            if (string.IsNullOrWhiteSpace(ipString) || ipString.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+                return IPAddress.Loopback;
+
+            if (IPAddress.TryParse(ipString, out IPAddress address))
+                return address;
+
+            try
+            {
+                var addresses = Dns.GetHostAddresses(ipString);
+                foreach (var a in addresses)
+                {
+                    if (a.AddressFamily == AddressFamily.InterNetwork)
+                        return a;
+                }
+            }
+            catch { }
+
+            return IPAddress.Loopback;
+        }
+
         public void pingServer()
         {
-            IPEndPoint ip = new IPEndPoint(IPAddress.Parse(this.IP), this.Port);
+            IPAddress targetIp = ResolveIP(this.IP);
+            IPEndPoint ip = new IPEndPoint(targetIp, this.Port);
             Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
             this.status = ServerStatus.Pinging;

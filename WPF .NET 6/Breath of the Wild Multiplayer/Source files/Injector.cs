@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -23,15 +23,21 @@ public static class Injector
     static extern int WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] buffer, uint size, int lpNumberOfBytesWritten);
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern IntPtr CreateRemoteThread(IntPtr hProcess, IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
     
     public static Process Inject(string processName, string dllPath, List<Process>? Filter = null)
     {
-        Process? ProcessToInject = GetProcesses(processName).
-            Where(process => Filter != null ? !Filter.Any(p => p.Id == process.Id) : true).
-            FirstOrDefault();
-
-        Debug.WriteLine(GetProcesses(processName).
-            Where(process => Filter != null ? !Filter.Any(p => p.Id == process.Id) : true).Count());
+        Process? ProcessToInject = null;
+        for (int retry = 0; retry < 50; retry++)
+        {
+            ProcessToInject = GetProcesses(processName).
+                Where(process => Filter != null ? !Filter.Any(p => p.Id == process.Id) : true).
+                FirstOrDefault();
+            if (ProcessToInject != null)
+                break;
+            System.Threading.Thread.Sleep(200);
+        }
 
         if (ProcessToInject == null)
             throw new Exception("Failed to find Cemu process");
@@ -86,17 +92,19 @@ public static class Injector
 
         if (hndProc == INTPTR_ZERO) { return false; }
 
-        IntPtr lpAddress = VirtualAllocEx(hndProc, (IntPtr)null, (IntPtr)dllPath.Length, (0x1000 | 0x2000), 0x40);
+        byte[] bytes = Encoding.ASCII.GetBytes(dllPath + "\0");
+
+        IntPtr lpAddress = VirtualAllocEx(hndProc, (IntPtr)null, (IntPtr)bytes.Length, (0x1000 | 0x2000), 0x40);
 
         if (lpAddress == INTPTR_ZERO)
         {
+            CloseHandle(hndProc);
             return false;
         }
 
-        byte[] bytes = Encoding.ASCII.GetBytes(dllPath);
-
         if (WriteProcessMemory(hndProc, lpAddress, bytes, (uint)bytes.Length, 0) == 0)
         {
+            CloseHandle(hndProc);
             return false;
         }
 
@@ -104,8 +112,13 @@ public static class Injector
 
         IntPtr hThread = CreateRemoteThread(hndProc, IntPtr.Zero, 0, loadlibAddy, lpAddress, 0, IntPtr.Zero);
 
-        CloseHandle(hThread);
+        if (hThread != IntPtr.Zero)
+        {
+            WaitForSingleObject(hThread, 5000);
+            CloseHandle(hThread);
+        }
 
+        CloseHandle(hndProc);
         return true;
     }
 
