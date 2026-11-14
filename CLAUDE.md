@@ -221,6 +221,17 @@ Copy-Item "Build\Resources\InjectDLL.dll" "WPF .NET 6\Breath of the Wild Multipl
   4. **SEH Guard & Clamp in `Scanner.cpp`**: Added `SafeReadByte` with `__try / __except` and clamped scans to `baseAddr + 0x100000000ULL` (4GB Wii U boundary).
   5. **Queued Actor Logging**: Added explicit logging in `queueActor(int playerNumber, ...)` for complete visibility into the spawn ring buffer.
 
+### K. Elimination of Infinite While Loop in `EquippedItems.h`
+* **Symptom**: During dual-instance test, Cemu never crashed, but remote players never appeared. The log showed endless repeated entries every 2 seconds:
+  `[DBG][DataTypes::EquippedItems::EquippedItems] Failed to find equipped items.`
+* **Root Cause**:
+  In `EquippedItems.h`, `while (addr < 30000)` had no exit condition or retry counter. When scanning for `{ 0x82, 0x48, 0x92, 0xBE, -1, -1, -1, -1, 0x82, 0x48, 0x92, 0xBE }`, `Memory::ScanOffset` was calculated using uninitialized `Memory::RegionStart`, setting `startingAddress` to a 64-bit host virtual address (`> 2TB`). `PatternScan` immediately returned 0, permanently trapping `LocalInstance::scan()` in an infinite loop and preventing `setActorSpawning()` and `Instances::PlayerList` from ever being initialized.
+* **Fix Applied**:
+  1. Replaced infinite loops in `EquippedItems.h` with a 2-retry limit (`Sleep(200)`). If addresses are not found, it gracefully logs a warning, sets `AddressSet = false`, and returns default equipment without blocking.
+  2. Removed `exit(1)` from `ValidateAddress` in `EquippedItems.h`.
+  3. Added scan offset 0 fallback in `BigEndian.h` and `LittleEndian.h` if a non-zero `scanOffset` fails to find an address.
+  4. Recompiled `InjectDLL.dll` and updated all launcher resources.
+
 ---
 
 ### WPF .NET 8 Launcher (`Breath of the Wild Multiplayer.exe`)
