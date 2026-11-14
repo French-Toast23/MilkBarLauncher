@@ -359,6 +359,7 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
                     {
                         string src = Path.Combine(AppContext.BaseDirectory, "patches", patchFile);
                         if (!File.Exists(src)) src = Path.Combine(Directory.GetCurrentDirectory(), "patches", patchFile);
+                        if (!File.Exists(src)) src = Path.Combine(AppContext.BaseDirectory, "..", "patches", patchFile);
                         if (!File.Exists(src)) src = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "patches", patchFile);
                         if (File.Exists(src))
                         {
@@ -406,6 +407,8 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
                     if (!File.Exists(backupActorInfo))
                         backupActorInfo = Path.Combine(Directory.GetCurrentDirectory(), "patches", "ActorInfo.product.sbyml");
                     if (!File.Exists(backupActorInfo))
+                        backupActorInfo = Path.Combine(AppContext.BaseDirectory, "..", "patches", "ActorInfo.product.sbyml");
+                    if (!File.Exists(backupActorInfo))
                         backupActorInfo = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "patches", "ActorInfo.product.sbyml");
                     if (File.Exists(backupActorInfo))
                     {
@@ -420,6 +423,28 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
                 string packDir = Path.Combine(merged, "Pack");
                 if (!Directory.Exists(packDir))
                     return;
+
+                // Ensure merged Bootup.pack with multiplayer GameData & SaveData flags is present
+                string bootupPath = Path.Combine(packDir, "Bootup.pack");
+                string backupBootup = Path.Combine(AppContext.BaseDirectory, "patches", "Bootup.pack");
+                if (!File.Exists(backupBootup)) backupBootup = Path.Combine(Directory.GetCurrentDirectory(), "patches", "Bootup.pack");
+                if (!File.Exists(backupBootup)) backupBootup = Path.Combine(AppContext.BaseDirectory, "..", "patches", "Bootup.pack");
+                if (!File.Exists(backupBootup)) backupBootup = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "patches", "Bootup.pack");
+                if (File.Exists(backupBootup))
+                {
+                    bool bootupNeedsCopy = !File.Exists(bootupPath) ||
+                                           new FileInfo(bootupPath).Length != new FileInfo(backupBootup).Length ||
+                                           File.GetLastWriteTimeUtc(backupBootup) > File.GetLastWriteTimeUtc(bootupPath);
+                    if (bootupNeedsCopy)
+                    {
+                        try
+                        {
+                            Directory.CreateDirectory(packDir);
+                            File.Copy(backupBootup, bootupPath, true);
+                        }
+                        catch { }
+                    }
+                }
 
                 string[] rawPacks = { "Bootup.pack", "TitleBG.pack" };
                 foreach (string packName in rawPacks)
