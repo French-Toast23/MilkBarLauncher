@@ -174,6 +174,11 @@ namespace DataTypes
 				return Equipment;
 			}
 
+			if (!ValidateAddress(EquippedAddress, caller) || !ValidateAddress(PorchAddress, caller))
+			{
+				return Equipment;
+			}
+
 			for (int i = 0; i < 420; i++)
 			{
 				int isEquipped = Memory::read_bigEndian4Bytes(EquippedAddress + (i * 8), __FUNCTION__);

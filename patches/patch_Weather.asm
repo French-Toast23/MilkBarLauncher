@@ -25,6 +25,29 @@ MP_Weather_WeatherBytesMap:
 .byte 6
 .byte 7
 .byte 8
+.byte 0
+.byte 0
+.byte 0
+
+MP_Spawn_Enabled:
+.int 0
+
+MP_Spawn_R3:
+.int 0
+MP_Spawn_R4:
+.int 0
+MP_Spawn_R5:
+.int 0
+MP_Spawn_R6:
+.int 0
+MP_Spawn_R7:
+.int 0
+MP_Spawn_R8:
+.int 0
+MP_Spawn_R9:
+.int 0
+MP_Spawn_R10:
+.int 0
 
 MP_Weather_ChangeWeatherCalled:
 b MP_Weather_HookWeather
@@ -40,7 +63,7 @@ blr									; Return back to the link register
 0x03668FEC = bla MP_Weather_ChangeWeatherCalled	; Replace instruction that normally stores the weather with a jump to the weather changing function
 
 MP_Weather_HookWeather:
-addi r1, r1, -0x28
+addi r1, r1, -0x38
 stw r3, 0(r1)
 stw r4, 4(r1)
 stw r5, 8(r1)
@@ -50,9 +73,11 @@ stw r8, 20(r1)
 stw r9, 24(r1)
 stw r10, 28(r1)
 stw r11, 32(r1)
+stw r12, 36(r1)
 mflr r3
-stw r3, 32(r1)
-
+stw r3, 40(r1)
+mfctr r3
+stw r3, 44(r1)
 
 ; Check if we already have our dll func addr
 lis r11, MP_Weather_HLELoc@ha
@@ -68,14 +93,54 @@ cmpwi r11, 0x0
 beq MP_Weather_RestoreAndExit
 mtctr r11
 
-
 lis r3, MP_Weather_WeatherBytesMap@ha
 addi r3, r3, MP_Weather_WeatherBytesMap@l
 bctrl
 
+; Check if actor spawn requested from C++
+lis r11, MP_Spawn_Enabled@ha
+lwz r11, MP_Spawn_Enabled@l(r11)
+cmpwi r11, 0x0
+beq MP_Weather_RestoreAndExit
+
+; Clear Enabled flag
+li r11, 0x0
+lis r12, MP_Spawn_Enabled@ha
+stw r11, MP_Spawn_Enabled@l(r12)
+
+; Load registers for createActor_
+lis r11, MP_Spawn_R3@ha
+lwz r3, MP_Spawn_R3@l(r11)
+lis r11, MP_Spawn_R4@ha
+lwz r4, MP_Spawn_R4@l(r11)
+lis r11, MP_Spawn_R5@ha
+lwz r5, MP_Spawn_R5@l(r11)
+lis r11, MP_Spawn_R6@ha
+lwz r6, MP_Spawn_R6@l(r11)
+lis r11, MP_Spawn_R7@ha
+lwz r7, MP_Spawn_R7@l(r11)
+lis r11, MP_Spawn_R8@ha
+lwz r8, MP_Spawn_R8@l(r11)
+lis r11, MP_Spawn_R9@ha
+lwz r9, MP_Spawn_R9@l(r11)
+lis r11, MP_Spawn_R10@ha
+lwz r10, MP_Spawn_R10@l(r11)
+
+; Set return address to MP_Weather_RestoreAndExit
+lis r11, MP_Weather_RestoreAndExit@ha
+addi r11, r11, MP_Weather_RestoreAndExit@l
+mtlr r11
+
+; Branch to createActor_
+lis r11, 0x037b
+ori r11, r11, 0x6040
+mtctr r11
+bctr
 
 MP_Weather_RestoreAndExit:
-lwz r3, 32(r1)
+lwz r3, 44(r1)
+mtctr r3
+lwz r3, 40(r1)
 mtlr r3
 lwz r3, 0(r1)
 lwz r4, 4(r1)
@@ -86,6 +151,7 @@ lwz r8, 20(r1)
 lwz r9, 24(r1)
 lwz r10, 28(r1)
 lwz r11, 32(r1)
-addi r1, r1, 0x28
+lwz r12, 36(r1)
+addi r1, r1, 0x38
 
 b MP_Weather_ChangeWeather

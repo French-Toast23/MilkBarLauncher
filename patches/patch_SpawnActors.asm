@@ -4224,6 +4224,24 @@ li r11, 0x0
 lis r12, Enabled@ha
 stb r11, Enabled@l(r12)
 
+; Load registers for createActor_
+lis r11, F_R3@ha
+lwz r3, F_R3@l(r11)
+lis r11, F_R4@ha
+lwz r4, F_R4@l(r11)
+lis r11, F_R5@ha
+lwz r5, F_R5@l(r11)
+lis r11, F_R6@ha
+lwz r6, F_R6@l(r11)
+lis r11, F_R7@ha
+lwz r7, F_R7@l(r11)
+lis r11, F_R8@ha
+lwz r8, F_R8@l(r11)
+lis r11, F_R9@ha
+lwz r9, F_R9@l(r11)
+lis r11, F_R10@ha
+lwz r10, F_R10@l(r11)
+
 ; Call the function
 bctr
 

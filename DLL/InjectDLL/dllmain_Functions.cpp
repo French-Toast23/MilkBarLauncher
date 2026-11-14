@@ -1913,9 +1913,34 @@ void Main::mainServerLoop()
             }
         }
 
+        static std::map<int, DWORD> s_playerLastSeen;
+        DWORD now = GetTickCount();
+
+        for (int pId : ConnectedPlayers) {
+            s_playerLastSeen[pId] = now;
+        }
+
         for (int i = 1; i < 33; i++)
-            if (Instances::PlayerList.count(i) && Instances::PlayerList[i] && Instances::PlayerList[i]->connected && std::find(ConnectedPlayers.begin(), ConnectedPlayers.end(), i) == ConnectedPlayers.end())
-                Instances::PlayerList[i]->Disconnect();
+        {
+            if (Instances::PlayerList.count(i) && Instances::PlayerList[i] && Instances::PlayerList[i]->connected)
+            {
+                if (std::find(ConnectedPlayers.begin(), ConnectedPlayers.end(), i) == ConnectedPlayers.end())
+                {
+                    if (s_playerLastSeen.find(i) == s_playerLastSeen.end())
+                        s_playerLastSeen[i] = now;
+
+                    if (now - s_playerLastSeen[i] > 3000)
+                    {
+                        Instances::PlayerList[i]->Disconnect();
+                        s_playerLastSeen.erase(i);
+                    }
+                }
+            }
+            else
+            {
+                s_playerLastSeen.erase(i);
+            }
+        }
 
         Game::GameInstance->EnemyService->SetServerData(serverResponse->EnemyData);
         Game::GameInstance->QuestService->SetServerData(serverResponse->QuestData->Completed, Game::GameInstance->IsGamePaused, QuestSyncReady);

@@ -33,10 +33,18 @@ namespace MemoryAccess
 
 			if (addr != 0)
 			{
-				uint64_t posAddr = Memory::ReadPointers(baseAddr, { 0x3A0, 0x50, 0x4, 0x80, 0x0, 0x5C, 0x18 }, true) + 0x50;
+				uint64_t posAddr = 0;
+				for (int retries = 0; retries < 10; retries++)
+				{
+					posAddr = Memory::ReadPointers(baseAddr, { 0x3A0, 0x50, 0x4, 0x80, 0x0, 0x5C, 0x18 }, true) + 0x50;
+					if (posAddr >= 30000)
+						break;
+					Sleep(10);
+				}
 
 				if (posAddr < 30000)
 				{
+					Logging::LoggerService::LogWarning("Actor::setAddress: Could not resolve posAddr for actor 0x" + std::to_string(baseAddr), "Actor");
 					baseAddr = 0;
 					return;
 				}

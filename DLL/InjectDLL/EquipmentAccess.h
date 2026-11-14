@@ -218,14 +218,17 @@ namespace DataTypes
 
 		void FindWeaponAddr(uint64_t baseAddr)
 		{
+			if (baseAddr == 0) return;
 			uint64_t addr = Memory::ReadPointers(baseAddr, { 0x39C, 0x78, 0x244 }, false);
+			if (addr == 0) return;
 
 			bool Found = false;
 			int iterator = 0;
 
-			while (!Found)
+			while (!Found && iterator < 100)
 			{
 				uint64_t temp = Memory::read_bigEndian4BytesOffset(addr + (iterator * 0x4), __FUNCTION__);
+				if (temp == 0) break;
 
 				if (int(3518303375) == Memory::read_bigEndian4BytesOffset(temp + 0x10, __FUNCTION__))
 				{
