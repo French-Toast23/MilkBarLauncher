@@ -76,6 +76,10 @@ std::vector<uint64_t> Link_class::ScanData()
     {
         sig = { 0x03, -1, 0xB5, 0xCC, 0x00, 0x00, 0x00, 0x00, 0x10, 0x54, 0xF6, 0x44, 0x10, 0x2B, 0x7E, 0x78, 0x00, 0x00, 0x00 };
         locationAddr = Memory::PatternScan(sig, getBaseAddress(), 8, 0xe000000);
+        if (locationAddr < 30000)
+        {
+            locationAddr = Memory::PatternScan(sig, getBaseAddress(), 0, 0, false, true);
+        }
 
         if (locationAddr < 30000)
         {

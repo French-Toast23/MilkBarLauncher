@@ -247,17 +247,17 @@ namespace MemoryAccess
 			Defense = new BigEndian<int>(this->baseAddr, { 0x3b4, 0x0, 0x20, 0x4, 0x28, 0xd4, 0x158, 0x4, 0x4, 0x4, 0x4, 0x4, 0x4, 0xb0, 0x4, 0x4, 0xac, 0x28, 0x4 }, -0xE54, "Memory::LocalInstance::scan::Defense");
 			Health = new BigEndian<int>(Memory::getBaseAddress() + this->baseAddr + 0x540, "Memory::LocalInstance::scan::Health");
 			//World->Time = new BigEndian<float>({ 0x10, 0x29, 0x7D, 0x40, -1, 0x2E, 0xE3, 0x38 }, -0x04, __FUNCTION__);
-			NotPaused = new LittleEndian<bool>({ 0x93, 0x9B, 0xE2, 0xB9, 0x00, -1, 0x00, 0x00, 0x10, 0x29, 0x84, 0x10 }, -0x1, "Memory::LocalInstance::scan::NotPaused", 0);
+			NotPaused = new LittleEndian<bool>({ 0x93, 0x9B, 0xE2, 0xB9, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "Memory::LocalInstance::scan::NotPaused", 0);
 
-			propHuntFlags.Countdown = new LittleEndian<bool>({ 0x30, 0xA9, 0xAC, 0x57, 0x00, -1, 0x00, 0x00, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_Countdown", 0);
+			propHuntFlags.Countdown = new LittleEndian<bool>({ 0x30, 0xA9, 0xAC, 0x57, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_Countdown", 0);
 
-			uint64_t newOffset = propHuntFlags.Countdown->address - Memory::RegionStart;
+			uint64_t newOffset = (propHuntFlags.Countdown && propHuntFlags.Countdown->address > Memory::RegionStart) ? (propHuntFlags.Countdown->address - Memory::RegionStart) : 0;
 
-			propHuntFlags.HidePlayer = new LittleEndian<bool>({ 0x05, 0x22, 0xFA, 0x47, 0x00, -1, 0x00, 0x00, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_HideTimer", newOffset);
-			propHuntFlags.HidingPhase = new LittleEndian<bool>({ 0xA8, 0xA5, 0x8F, 0x41, 0x00, -1, 0x00, 0x00, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_HidingPhase", newOffset);
-			propHuntFlags.RunningPhase = new LittleEndian<bool>({ 0xB6, 0x68, 0x05, 0x99, 0x00, -1, 0x00, 0x00, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_RunningPhase", newOffset);
-			propHuntFlags.ShowPlayer = new LittleEndian<bool>({ 0x60, 0x3C, 0x05, 0xAA, 0x00, -1, 0x00, 0x00, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_ShowPhase", newOffset);
-			propHuntFlags.StopMusic = new LittleEndian<bool>({ 0xBC, 0x92, 0x90, 0x4B, 0x00, -1, 0x00, 0x00, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_StopMusic", newOffset);
+			propHuntFlags.HidePlayer = new LittleEndian<bool>({ 0x05, 0x22, 0xFA, 0x47, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_HideTimer", newOffset);
+			propHuntFlags.HidingPhase = new LittleEndian<bool>({ 0xA8, 0xA5, 0x8F, 0x41, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_HidingPhase", newOffset);
+			propHuntFlags.RunningPhase = new LittleEndian<bool>({ 0xB6, 0x68, 0x05, 0x99, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_RunningPhase", newOffset);
+			propHuntFlags.ShowPlayer = new LittleEndian<bool>({ 0x60, 0x3C, 0x05, 0xAA, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_ShowPhase", newOffset);
+			propHuntFlags.StopMusic = new LittleEndian<bool>({ 0xBC, 0x92, 0x90, 0x4B, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_StopMusic", newOffset);
 
 			Logging::LoggerService::LogInformation("Scanned game instance successfully.", __FUNCTION__);
 		}
@@ -279,64 +279,81 @@ namespace MemoryAccess
 			for (int i = 1; i < 33; i++)
 				result[i] = FlagAddresses();
 
-			std::vector<int> sig = { 0x82, 0xCB, 0xCC, 0x60, 0x00, -1, 0x00, 0x00, 0x10, 0x29, 0x84, 0x10 }; // Jugador10_DispNameFlag
+			std::vector<int> sig = { 0x82, 0xCB, 0xCC, 0x60, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }; // Jugador10_DispNameFlag
 			std::vector<int> FlagOrder1 = { 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 1, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 2, 30, 31, 32, 3, 4, 5, 6, 7, 8, 9 };
 			std::vector<int> FlagOrder2 = { 1, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 2, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 3, 30, 31, 32, 4, 5, 6, 7, 8, 9 };
 
-			uint64_t addr = Memory::PatternScan(sig, Memory::getBaseAddress(), 8, 0) - 0x1;
+			uint64_t rawAddr = Memory::PatternScan(sig, Memory::getBaseAddress(), 8, 0);
+			if (rawAddr < 30000)
+				rawAddr = Memory::PatternScan(sig, Memory::getBaseAddress(), 0, 0, false, true);
 
-			for (int i = 0; i < FlagOrder1.size(); i++)
+			if (rawAddr >= 30000)
 			{
-				result[FlagOrder1[i]].DispNameFlag = addr;
-
-				addr += BOOL_OFFSET;
-
-				result[FlagOrder1[i]].ExistsFlag = addr;
-
-				addr += BOOL_OFFSET;
+				uint64_t addr = rawAddr - 0x1;
+				for (int i = 0; i < FlagOrder1.size(); i++)
+				{
+					result[FlagOrder1[i]].DispNameFlag = addr;
+					addr += BOOL_OFFSET;
+					result[FlagOrder1[i]].ExistsFlag = addr;
+					addr += BOOL_OFFSET;
+				}
 			}
 
-			sig = { 0x87, 0x68, 0xFA, 0x81, 0x00, -1, 0x00, 0x00, 0x10, 0x29, 0x84, 0xC8 }; // Jugador10_Status
-			
-			addr = Memory::PatternScan(sig, Memory::getBaseAddress(), 8, 0) - 0x4;
+			sig = { 0x87, 0x68, 0xFA, 0x81, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0xC8 }; // Jugador10_Status
+			rawAddr = Memory::PatternScan(sig, Memory::getBaseAddress(), 8, 0);
+			if (rawAddr < 30000)
+				rawAddr = Memory::PatternScan(sig, Memory::getBaseAddress(), 0, 0, false, true);
 
-			for (int i = 0; i < FlagOrder1.size(); i++)
+			if (rawAddr >= 30000)
 			{
-				result[FlagOrder1[i]].StatusFlag = addr;
-
-				addr += INT_OFFSET;
+				uint64_t addr = rawAddr - 0x4;
+				for (int i = 0; i < FlagOrder1.size(); i++)
+				{
+					result[FlagOrder1[i]].StatusFlag = addr;
+					addr += INT_OFFSET;
+				}
 			}
 
-			sig = { 0xF2, 0xA5, 0xD4, 0xA2, 0x00, -1, 0x00, 0x00, 0x10, 0x29, 0x86, 0x38 }; // Jugador10_Name
+			sig = { 0xF2, 0xA5, 0xD4, 0xA2, -1, -1, -1, -1, 0x10, 0x29, 0x86, 0x38 }; // Jugador10_Name
+			rawAddr = Memory::PatternScan(sig, Memory::getBaseAddress(), 8, 0);
+			if (rawAddr < 30000)
+				rawAddr = Memory::PatternScan(sig, Memory::getBaseAddress(), 0, 0, false, true);
 
-			addr = Memory::PatternScan(sig, Memory::getBaseAddress(), 8, 0) - 0x20;
-
-			for (int i = 0; i < FlagOrder1.size(); i++)
+			if (rawAddr >= 30000)
 			{
-				result[FlagOrder1[i]].NameFlag = addr;
-
-				addr += STR32_OFFSET;
+				uint64_t addr = rawAddr - 0x20;
+				for (int i = 0; i < FlagOrder1.size(); i++)
+				{
+					result[FlagOrder1[i]].NameFlag = addr;
+					addr += STR32_OFFSET;
+				}
 			}
 
 			sig = { 0x0D, 0x4A, 0x75, 0x67, 0x61, 0x64, 0x6F, -1, 0x31, 0x5F, 0x48, 0x6F, 0x6C, 0x64 }; //Jugador1_Hold
 
-			addr = Memory::PatternScan(sig, Memory::getBaseAddress(), 8) + 0x1;
-			//uint64_t addr_copy = addr;
+			uint64_t holdRaw = Memory::PatternScan(sig, Memory::getBaseAddress(), 8);
+			if (holdRaw < 30000)
+				holdRaw = Memory::PatternScan(sig, Memory::getBaseAddress(), 0, 0, false, true);
 
+			uint64_t addr = holdRaw + 0x1;
 			int retries = 0;
 
-			while (addr < 30000)
+			while (addr - 0x1 < 30000)
 			{
 				Logging::LoggerService::LogDebug("Could not find hold address.", __FUNCTION__);
 				Sleep(1000);
 
 				if (retries == 15)
 				{
-					Logging::LoggerService::LogError("Failed to find mod address. Make sure that the mod is installed correctly in BCML.");
-					throw errorMessage;
+					Logging::LoggerService::LogWarning("Could not find hold address after 15 retries. Non-fatal.", __FUNCTION__);
+					break;
 				}
 
-				addr = Memory::PatternScan(sig, Memory::getBaseAddress(), 8) + 0x1;
+				holdRaw = Memory::PatternScan(sig, Memory::getBaseAddress(), 8);
+				if (holdRaw < 30000)
+					holdRaw = Memory::PatternScan(sig, Memory::getBaseAddress(), 0, 0, false, true);
+
+				addr = holdRaw + 0x1;
 				retries++;
 			}
 

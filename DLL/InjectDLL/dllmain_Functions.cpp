@@ -1497,14 +1497,14 @@ void Main::oldServerLoop()
 
 bool Main::CheckIfPaused()
 {
-    //Memory::write_byte(notPaused, 0x00, __FUNCTION__);
+    if (!Game::GameInstance || !Game::GameInstance->NotPaused || !Game::GameInstance->NotPaused->isAddressSet())
+        return false;
+
     Game::GameInstance->NotPaused->set(0, __FUNCTION__);
 
     Sleep(300);
 
     return !Game::GameInstance->NotPaused->get(__FUNCTION__);
-
-    //return Memory::read_bytes(notPaused, 1, __FUNCTION__)[0] == 0x0 ? true : false;
 }
 
 void Memory::Bomb::SetData(std::string bombType, float initialPos[3])

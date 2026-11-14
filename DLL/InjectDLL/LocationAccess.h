@@ -17,6 +17,10 @@ namespace DataTypes
 			Memory::ScanOffset = 0xe000000;
 
 			uint64_t addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, Memory::ScanOffset);
+			if (addr < 30000)
+			{
+				addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 0, 0, false, true);
+			}
 			
 			int retries = 0;
 
@@ -34,6 +38,10 @@ namespace DataTypes
 
 				Logging::LoggerService::LogDebug("Failed to find address", __FUNCTION__);
 				addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, Memory::ScanOffset);
+				if (addr < 30000)
+				{
+					addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 0, 0, false, true);
+				}
 			}
 
 			MEMORY_BASIC_INFORMATION mbi{ 0 };

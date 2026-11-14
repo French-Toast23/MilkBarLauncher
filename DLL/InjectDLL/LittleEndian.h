@@ -21,6 +21,7 @@ namespace DataTypes
 
 		void set(T val, const char* caller);
 		T get(const char* caller);
+		bool isAddressSet() const { return AddressSet; }
 
 	private:
 		DWORD* Pointer;
@@ -61,6 +62,10 @@ namespace DataTypes
 		}
 
 		uint64_t addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, scanOffset) + finalOffset;
+		if (addr - finalOffset < 30000)
+		{
+			addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 0, 0, false, true) + finalOffset;
+		}
 
 		int retries = 0;
 		while (addr - finalOffset < 30000)
@@ -70,12 +75,17 @@ namespace DataTypes
 
 			if (retries == 15)
 			{
-				Logging::LoggerService::LogError("Could not find location address. Closing...");
-				throw L"Failed to find mod address. Make sure that the mod is installed correctly in BCML and that BCML, Extended Memory and Multiplayer Utilities graphics packs are enabled.";
+				Logging::LoggerService::LogWarning("Could not find location address after 15 retries. Flag disabled gracefully.", caller);
+				AddressSet = false;
+				return;
 			}
 
 			retries++;
 			addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, scanOffset) + finalOffset;
+			if (addr - finalOffset < 30000)
+			{
+				addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 0, 0, false, true) + finalOffset;
+			}
 		}
 
 		if (saveOffset)

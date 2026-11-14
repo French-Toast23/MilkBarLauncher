@@ -192,6 +192,20 @@ Disassembly of `Cemu.exe` (2.6 x64):
 Copy-Item "Build\Resources\InjectDLL.dll" "WPF .NET 6\Breath of the Wild Multiplayer\Resources\InjectDLL.dll" -Force
 ```
 
+### I. Pattern Scan Relaxed Wildcarding, Multi-Region Fallback & Graceful Degradation
+* **Symptom**: Popup dialog appeared ~15 seconds after loading into the game:
+  `"Failed to find mod address. Make sure that the mod is installed correctly in BCML and that BCML, Extended Memory and Multiplayer Utilities graphics packs are enabled."`
+* **Root Causes**:
+  1. **Over-constrained Signature**: `NotPaused`, PropHunt flags, and `Jugador10_*` flags in `LocalInstance.h` hardcoded bytes 4, 6, 7 to `0x00` (`{ hash, 0x00, -1, 0x00, 0x00, vtable }`). In BotW, bytes 4..7 represent packed 32-bit bitfields (`IsProgramReadable`, `IsProgramWritable`, `IsSave`, `Category`, `ResetType`). When `IsSave: False` or `Category` is present, bitfields differ from 0x00, causing pattern scan rejection.
+  2. **Single-Region Barrier**: `PatternScan` was called with `region = 8, multipleRegions = false`. In Cemu 2.6 with Extended Memory (2GB RAM pack), guest heap allocations can be placed in additional committed virtual memory regions beyond region 8.
+* **Fix Applied**:
+  - Replaced bytes 4..7 with `-1, -1, -1, -1` across `NotPaused`, PropHunt flags, and `Jugador10_*` in `LocalInstance.h`.
+  - Added multi-region scanning fallback (`region = 0, multipleRegions = true`) in `LittleEndian.h`, `BigEndian.h`, `LocationAccess.h`, and `CharacterClasses.cpp` when region 8 returns `< 30000`.
+  - Replaced fatal exception throwing on non-critical flags with `AddressSet = false` and warning logs, allowing gameplay to proceed.
+  - Added `isAddressSet()` safety check in `Main::CheckIfPaused()` to default to unpaused if the flag is absent.
+
+---
+
 ### WPF .NET 8 Launcher (`Breath of the Wild Multiplayer.exe`)
 ```powershell
 dotnet build "WPF .NET 6\Breath of the Wild Multiplayer\Breath of the Wild Multiplayer.csproj" -c Release
