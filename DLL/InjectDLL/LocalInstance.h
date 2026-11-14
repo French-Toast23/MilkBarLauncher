@@ -171,7 +171,7 @@ namespace MemoryAccess
 
 			if (pos.x() == 0 && pos.y() == 0 && pos.z() == 0)
 			{
-				if (Position)
+				if (Position && Position->isAddressSet())
 					pos = Position->get(__FUNCTION__);
 			}
 
@@ -222,7 +222,7 @@ namespace MemoryAccess
 
 			if (pos.x() == 0 && pos.y() == 0 && pos.z() == 0)
 			{
-				if (Position)
+				if (Position && Position->isAddressSet())
 					pos = Position->get(__FUNCTION__);
 			}
 
@@ -244,7 +244,7 @@ namespace MemoryAccess
 
 		void setAddress(uint64_t addr)
 		{
-			this->baseAddr = addr;
+			Actor::setAddress(addr);
 		}
 
 		void scan()
@@ -675,6 +675,11 @@ namespace MemoryAccess
 		DTO::ClientCharacterDTO* get_characterData()
 		{
 			DTO::ClientCharacterDTO* result = new DTO::ClientCharacterDTO();
+
+			if (!this->Position || !this->Position->isAddressSet())
+			{
+				this->resolvePosition();
+			}
 
 			result->Position = this->Position->get(__FUNCTION__);
 			result->Rotation1 = this->Rotation1->get(__FUNCTION__);

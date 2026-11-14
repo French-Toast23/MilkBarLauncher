@@ -285,7 +285,8 @@ queuedActors.erase(queuedActors.begin());
 
 void mainFn(PPCInterpreter_t* hCPU, uint32_t startTrnsData, uint32_t startRingBuffer, uint32_t endRingBuffer, uint64_t baseAddress) {
 	if (!hCPU) return;
-	hCPU->instructionPointer = hCPU->sprNew.LR;
+	if (hCPU->sprNew.LR >= 0x01000000 && hCPU->sprNew.LR < 0x10000000)
+		hCPU->instructionPointer = hCPU->sprNew.LR;
 
 	if (baseAddress == 0 || !memInstance || startTrnsData < 0x1000)
 		return;
@@ -323,7 +324,8 @@ void mainFn(PPCInterpreter_t* hCPU, uint32_t startTrnsData, uint32_t startRingBu
 
 void mainFn(PPCInterpreter_t* hCPU) {
 	if (!hCPU) return;
-	hCPU->instructionPointer = hCPU->sprNew.LR;
+	if (hCPU->sprNew.LR >= 0x01000000 && hCPU->sprNew.LR < 0x10000000)
+		hCPU->instructionPointer = hCPU->sprNew.LR;
 	static bool s_loggedMainFn = false;
 	if (!s_loggedMainFn) {
 		s_loggedMainFn = true;
@@ -477,7 +479,8 @@ void ProcessActorSpawnsInWeather(PPCInterpreter_t* hCPU, uint32_t mapAddr)
 
 void WeatherFn(PPCInterpreter_t* hCPU) {
 	if (!hCPU) return;
-	hCPU->instructionPointer = hCPU->sprNew.LR;
+	if (hCPU->sprNew.LR >= 0x01000000 && hCPU->sprNew.LR < 0x10000000)
+		hCPU->instructionPointer = hCPU->sprNew.LR;
 	static bool s_loggedWeather = false;
 	if (!s_loggedWeather) {
 		s_loggedWeather = true;
@@ -512,7 +515,8 @@ bool started = false;
 void OnActorCreate(PPCInterpreter_t* hCPU)
 {
 	if (!hCPU) return;
-	hCPU->instructionPointer = hCPU->sprNew.LR;
+	if (hCPU->sprNew.LR >= 0x01000000 && hCPU->sprNew.LR < 0x10000000)
+		hCPU->instructionPointer = hCPU->sprNew.LR;
 
 	if (Main::baseAddr == 0)
 		Main::baseAddr = Memory::getBaseAddress();
@@ -661,7 +665,8 @@ void OnActorCreate(PPCInterpreter_t* hCPU)
 void OnActorErase(PPCInterpreter_t* hCPU)
 {
 	if (!hCPU) return;
-	hCPU->instructionPointer = hCPU->sprNew.LR;
+	if (hCPU->sprNew.LR >= 0x01000000 && hCPU->sprNew.LR < 0x10000000)
+		hCPU->instructionPointer = hCPU->sprNew.LR;
 
 	if (Main::baseAddr == 0)
 		Main::baseAddr = Memory::getBaseAddress();
@@ -769,7 +774,8 @@ void OnActorErase(PPCInterpreter_t* hCPU)
 void remoteBomb_onAICalc(PPCInterpreter_t* hCPU)
 {
 	if (!hCPU) return;
-	hCPU->instructionPointer = hCPU->sprNew.LR;
+	if (hCPU->sprNew.LR >= 0x01000000 && hCPU->sprNew.LR < 0x10000000)
+		hCPU->instructionPointer = hCPU->sprNew.LR;
 
 	if (Main::baseAddr == 0 || !memInstance || hCPU->gpr[3] < 0x1000)
 		return;
@@ -869,10 +875,11 @@ void remoteBomb_onAICalc(PPCInterpreter_t* hCPU)
 
 void remoteBomb_onAICalc2(PPCInterpreter_t* hCPU)
 {
+	if (!hCPU) return;
+	if (hCPU->sprNew.LR >= 0x01000000 && hCPU->sprNew.LR < 0x10000000)
+		hCPU->instructionPointer = hCPU->sprNew.LR;
 
 	std::vector<std::string> RealBombChoices = { "RemoteBomb", "RemoteBomb2", "RemoteBombCube", "RemoteBombCube2" };
-
-	hCPU->instructionPointer = hCPU->sprNew.LR;
 	
 	unsigned int aiPtr = hCPU->gpr[3];
 	unsigned int actPtr;
@@ -927,7 +934,8 @@ void remoteBomb_onAICalc2(PPCInterpreter_t* hCPU)
 void timemgr_OnInit(PPCInterpreter_t* hCPU)
 {
 	if (!hCPU) return;
-	hCPU->instructionPointer = hCPU->sprNew.LR;
+	if (hCPU->sprNew.LR >= 0x01000000 && hCPU->sprNew.LR < 0x10000000)
+		hCPU->instructionPointer = hCPU->sprNew.LR;
 
 	if (Main::baseAddr == 0 || !Game::GameInstance || !Game::GameInstance->World)
 		return;
@@ -938,7 +946,8 @@ void timemgr_OnInit(PPCInterpreter_t* hCPU)
 
 void dummySelfTestFn(PPCInterpreter_t* hCPU)
 {
-	if (hCPU) hCPU->instructionPointer = hCPU->sprNew.LR;
+	if (hCPU && hCPU->sprNew.LR >= 0x01000000 && hCPU->sprNew.LR < 0x10000000)
+		hCPU->instructionPointer = hCPU->sprNew.LR;
 }
 
 void init() {
@@ -1054,72 +1063,93 @@ void BindHLEAddresses()
 		Logging::LoggerService::LogInformation(ss.str());
 	}
 
-	// 1. BotW_UKL_ActorInterceptor_V208 (Codecave default: 0x01808200)
-	BindSlot(Main::baseAddr + 0x0180822c, addr_OnActorCreate, "OnActorCreate");
-	BindSlot(Main::baseAddr + 0x01808244, addr_OnActorDeleteLater, "OnActorDeleteLater");
-	BindSlot(Main::baseAddr + 0x01808258, addr_OnActorErase, "OnActorErase");
-
-	// Dynamic scan around codecave range [0x01800000, 0x01900000]
+	// Pure dynamic scan of graphic pack codecaves in range [0x01800000, 0x01820000]
+	// NEVER write to hardcoded fallback offsets, which corrupt adjacent modules!
 	uint8_t* pStart = (uint8_t*)(Main::baseAddr + 0x01800000);
-	const char targetStr[] = "ukl_actorinterceptor";
+	bool foundActor = false;
+	bool foundSpawn = false;
+	bool foundWeather = false;
+	bool foundBomb = false;
+	bool foundTime = false;
+
+	const char targetStrActor[] = "ukl_actorinterceptor";
+	const char targetStrSpawn[] = "spawnactors";
+	const char targetStrWeather[] = "WeatherSync";
+	const char targetStrBomb[] = "ukl_remotebombaiinterceptor";
+	const char targetStrTime[] = "ukl_timemgrinterceptor";
+
 	for (size_t offset = 0; offset < 0x20000; offset += 4)
 	{
-		if (memcmp(pStart + offset, targetStr, sizeof(targetStr) - 1) == 0)
+		if (!foundActor && memcmp(pStart + offset, targetStrActor, sizeof(targetStrActor) - 1) == 0)
 		{
 			uint64_t modBase = Main::baseAddr + 0x01800000 + offset;
 			BindSlot(modBase + 0x2C, addr_OnActorCreate, "OnActorCreate (scan)");
 			BindSlot(modBase + 0x44, addr_OnActorDeleteLater, "OnActorDeleteLater (scan)");
 			BindSlot(modBase + 0x58, addr_OnActorErase, "OnActorErase (scan)");
-			break;
+			foundActor = true;
 		}
-	}
 
-	// 2. BotW_SpawnActors_V208 (Codecave default: 0x01800000, offset 0x0)
-	uint32_t spawnActorsGuestBase = 0x01800000;
-	BindSlot(Main::baseAddr + 0x01800000, addr_fnCallMain, "fnCallMain");
-
-	const char targetStrSpawn[] = "spawnactors";
-	for (size_t offset = 0; offset < 0x10000; offset += 4)
-	{
-		if (memcmp(pStart + offset, targetStrSpawn, sizeof(targetStrSpawn) - 1) == 0)
+		if (!foundSpawn && memcmp(pStart + offset, targetStrSpawn, sizeof(targetStrSpawn) - 1) == 0)
 		{
 			if (offset >= 0x14)
 			{
-				spawnActorsGuestBase = 0x01800000 + (uint32_t)(offset - 0x14);
-				BindSlot(Main::baseAddr + spawnActorsGuestBase, addr_fnCallMain, "fnCallMain (scan)");
+				uint32_t spawnActorsGuestBase = 0x01800000 + (uint32_t)(offset - 0x14);
+				uint64_t modBase = Main::baseAddr + spawnActorsGuestBase;
+				BindSlot(modBase, addr_fnCallMain, "fnCallMain (scan)");
+				s_storageStartGuestAddr = spawnActorsGuestBase + 0x20;
+				s_storageEndGuestAddr = spawnActorsGuestBase + 0x8020;
+				s_startTrnsDataGuestAddr = spawnActorsGuestBase + 0x8020;
+
+				// Enable register interception immediately so createActor_ captures r3..r10 on the very first actor created!
+				Memory::write_byte(Main::baseAddr + s_startTrnsDataGuestAddr + 1, 1, "BindHLEAddresses::InterceptRegisters");
+				foundSpawn = true;
 			}
-			break;
 		}
-	}
 
-	s_storageStartGuestAddr = spawnActorsGuestBase + 0x20;
-	s_storageEndGuestAddr = spawnActorsGuestBase + 0x8020;
-	s_startTrnsDataGuestAddr = spawnActorsGuestBase + 0x8020;
-
-	// Enable register interception immediately so createActor_ captures r3..r10 on the very first actor created!
-	Memory::write_byte(Main::baseAddr + s_startTrnsDataGuestAddr + 1, 1, "BindHLEAddresses::InterceptRegisters");
-	Logging::LoggerService::LogInformation("Initialized spawn storage: start=0x" + std::to_string(s_storageStartGuestAddr) + ", trnsData=0x" + std::to_string(s_startTrnsDataGuestAddr));
-
-	// 3. BotW_MPTesting_V208 (Codecave default: 0x01808a00, offset 0x0)
-	BindSlot(Main::baseAddr + 0x01808a00, addr_WeatherSync, "WeatherSync");
-
-	const char targetStrWeather[] = "WeatherSync";
-	for (size_t offset = 0; offset < 0x20000; offset += 4)
-	{
-		if (memcmp(pStart + offset, targetStrWeather, sizeof(targetStrWeather) - 1) == 0)
+		if (!foundWeather && memcmp(pStart + offset, targetStrWeather, sizeof(targetStrWeather) - 1) == 0)
 		{
 			if (offset >= 4)
 			{
-				BindSlot(Main::baseAddr + 0x01800000 + offset - 4, addr_WeatherSync, "WeatherSync (scan)");
+				uint64_t modBase = Main::baseAddr + 0x01800000 + offset - 4;
+				BindSlot(modBase, addr_WeatherSync, "WeatherSync (scan)");
+				foundWeather = true;
 			}
-			break;
 		}
+
+		if (!foundBomb && memcmp(pStart + offset, targetStrBomb, sizeof(targetStrBomb) - 1) == 0)
+		{
+			uint64_t modBase = Main::baseAddr + 0x01800000 + offset;
+			BindSlot(modBase + 0x28, addr_RemoteBomb, "RemoteBomb (scan)");
+			foundBomb = true;
+		}
+
+		if (!foundTime && memcmp(pStart + offset, targetStrTime, sizeof(targetStrTime) - 1) == 0)
+		{
+			uint64_t modBase = Main::baseAddr + 0x01800000 + offset;
+			BindSlot(modBase + 0x24, addr_TimeMgr, "TimeMgr (scan)");
+			foundTime = true;
+		}
+
+		if (foundActor && foundSpawn && foundWeather && foundBomb && foundTime)
+			break;
 	}
 
-	// 4. BotW_UKL_RemoteBombAIInterceptor_V208 (Codecave default: 0x01808400, offset 0x28)
-	BindSlot(Main::baseAddr + 0x01808428, addr_RemoteBomb, "RemoteBomb");
-
-	// 5. BotW_UKL_TimeMgrInterceptor_V208 (Codecave default: 0x01808500, offset 0x24)
-	BindSlot(Main::baseAddr + 0x01808524, addr_TimeMgr, "TimeMgr");
+	static bool s_loggedScanResult = false;
+	if (!s_loggedScanResult)
+	{
+		s_loggedScanResult = true;
+		std::stringstream ss;
+		ss << "BindHLEAddresses Scan Result: Actor=" << (foundActor ? "OK" : "MISSING")
+		   << ", Spawn=" << (foundSpawn ? "OK" : "MISSING")
+		   << ", Weather=" << (foundWeather ? "OK" : "MISSING")
+		   << ", Bomb=" << (foundBomb ? "OK" : "MISSING")
+		   << ", Time=" << (foundTime ? "OK" : "MISSING");
+		if (foundSpawn)
+		{
+			ss << " | storageStart=0x" << std::hex << s_storageStartGuestAddr
+			   << ", trnsData=0x" << s_startTrnsDataGuestAddr;
+		}
+		Logging::LoggerService::LogInformation(ss.str());
+	}
 }
 
