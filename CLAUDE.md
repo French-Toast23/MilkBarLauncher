@@ -250,6 +250,29 @@ Copy-Item "Build\Resources\InjectDLL.dll" "WPF .NET 6\Breath of the Wild Multipl
 
 ---
 
+### M. Codecave Memory Overlap & JIT Crash `0xc0000005` at `IP = 0x00000000` During Save Loading
+* **Symptom**: Cemu crashed with access violation `0xc0000005` (jumping to NULL address `0x0000000000000000`) on Cemu's CPU recompiler thread immediately when loading into the game world / save menu (right after `Link detected at: 0x6ee7ce30`).
+* **Dump Analysis (`Cemu.exe.28264.dmp`) & Cemu `log.txt`**:
+  - Cemu allocated consecutive graphic pack codecaves as follows:
+    - `BotW_SpawnActors_V208`: `0x01800000` - `0x01808204`
+    - `BotW_UKL_ActorInterceptor_V208`: `0x01808300` - `0x018084b4`
+    - `BotW_UKL_RemoteBombAIInterceptor_V208`: `0x01808500` - `0x018085a0`
+    - `BotW_UKL_TimeMgrInterceptor_V208`: `0x01808600` - `0x0180869c`
+    - `BotW_UKL_Utils_DynamicBranch_V208`: `0x01808700` - `0x01808794`
+    - `BotW_UKL_Utils_RegStore_V208`: `0x01808800` - `0x01808a18`
+    - `BotW_MPTesting_V208`: `0x01808b00` - `0x01808c94`
+  - In `SpawningVariables.h:BindHLEAddresses()`, hardcoded fallback addresses assumed old non-expanded codecave offsets:
+    - `WeatherSync` wrote to `0x01808a00` -> directly inside `UKL_Utils_RegStore` (`0x01808800` - `0x01808a18`), corrupting register restore instructions (`WriteR29`..`WriteR31`).
+    - `RemoteBomb` wrote to `0x01808428` -> directly inside `ActorInterceptor` (`0x01808300` - `0x018084b4`), corrupting `ActorEraseHook`.
+    - `TimeMgr` wrote to `0x01808524` -> directly inside `RemoteBomb` (`0x01808500` - `0x018085a0`).
+  - When `GameROMPlayer` was created and intercepted by `ActorCreateHook`, returning from `OnActorCreate` executed corrupted `RegStore` code, restoring a 0 return address and executing `blr` to `0x00000000`.
+* **Fixes Implemented**:
+  1. **Pure Dynamic Codecave Scanning**: Completely eliminated all blind hardcoded slot writes (`0x0180822c`, `0x01808244`, `0x01808258`, `0x01808a00`, `0x01808428`, `0x01808524`). The engine now scans for `"spawnactors"`, `"ukl_actorinterceptor"`, `"ukl_remotebombaiinterceptor"`, `"ukl_timemgrinterceptor"`, and `"WeatherSync"` dynamically in memory range `[0x01800000, 0x01820000]`. Slots are bound ONLY to verified matching offsets.
+  2. **Guarded `instructionPointer` Restoration**: In `OnActorCreate`, `OnActorErase`, `WeatherFn`, `mainFn`, `remoteBomb_onAICalc`, `remoteBomb_onAICalc2`, and `timemgr_OnInit`, `hCPU->instructionPointer = hCPU->sprNew.LR;` is strictly guarded by `if (hCPU->sprNew.LR >= 0x01000000 && hCPU->sprNew.LR < 0x10000000)` to ensure it never branches to 0 or invalid memory.
+  3. **Non-blocking Position Resolution in `LocalInstance`**: Overrode `setAddress` to call `Actor::setAddress(addr)` without clearing `baseAddr`, and hooked `resolvePosition()` inside `get_characterData()` to resolve Link's position pointers on demand.
+
+---
+
 ### WPF .NET 8 Launcher (`Breath of the Wild Multiplayer.exe`)
 ```powershell
 dotnet build "WPF .NET 6\Breath of the Wild Multiplayer\Breath of the Wild Multiplayer.csproj" -c Release
