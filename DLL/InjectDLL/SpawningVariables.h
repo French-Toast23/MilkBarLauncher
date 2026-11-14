@@ -761,6 +761,9 @@ void timemgr_OnInit(PPCInterpreter_t* hCPU)
 }
 
 void init() {
+	static bool s_initialized = false;
+	if (s_initialized) return;
+
 	HMODULE hCemu = GetModuleHandleA(NULL);
 	if (!hCemu) hCemu = GetModuleHandleA("Cemu.exe");
 	if (!hCemu)
@@ -784,7 +787,26 @@ void init() {
 	osLib_registerHLEFunction("ukl_remotebombaiinterceptor", "OnCalc", &remoteBomb_onAICalc);
 	osLib_registerHLEFunction("ukl_timemgrinterceptor", "OnInit", &timemgr_OnInit);
 
+	s_initialized = true;
 	Logging::LoggerService::LogInformation("init(): All HLE interceptors registered successfully.");
+}
+
+static void BindSlot(uint64_t slotHost, uint32_t idx, const char* name)
+{
+	if (idx == 0 || idx > 0xFFFF) return; // rejects 0, > 0xFFFF, and 0xFFFFFFFF (unregistered)
+	int op = (int)(0x04000000u | idx);
+	int current = Memory::read_bigEndian4Bytes(slotHost, __FUNCTION__);
+	if (current != op)
+	{
+		Memory::write_bigEndian4Bytes(slotHost, op, __FUNCTION__);
+		int readback = Memory::read_bigEndian4Bytes(slotHost, __FUNCTION__);
+		std::stringstream ss;
+		ss << "BindSlot: " << name << " at 0x" << std::hex << slotHost
+			<< " (idx=0x" << idx << ") wrote op=0x" << op
+			<< ", readback=0x" << readback
+			<< (readback == op ? " (VERIFIED MATCH)" : " (MISMATCH!)");
+		Logging::LoggerService::LogInformation(ss.str());
+	}
 }
 
 void BindHLEAddresses()
@@ -809,116 +831,90 @@ void BindHLEAddresses()
 	uint32_t addr_RemoteBomb = osLib_getHLEFunctionAddress("ukl_remotebombaiinterceptor", "OnCalc");
 	uint32_t addr_TimeMgr = osLib_getHLEFunctionAddress("ukl_timemgrinterceptor", "OnInit");
 
+	// Safety check: ensure lookup returned a sane HLE table index
+	if (addr_OnActorCreate == 0 || addr_OnActorCreate > 0xFFFF)
+	{
+		static bool s_loggedLookupError = false;
+		if (!s_loggedLookupError)
+		{
+			s_loggedLookupError = true;
+			std::stringstream ss;
+			ss << "BindHLEAddresses: osLib_getHLEFunctionAddress lookup invalid (OnActorCreate=0x"
+				<< std::hex << addr_OnActorCreate << "). Aborting slot binding.";
+			Logging::LoggerService::LogError(ss.str());
+		}
+		return;
+	}
+
 	static bool s_loggedAddresses = false;
 	if (!s_loggedAddresses)
 	{
 		s_loggedAddresses = true;
 		std::stringstream ss;
-		ss << "BindHLEAddresses: OnActorCreate=0x" << std::hex << addr_OnActorCreate
-			<< ", fnCallMain=0x" << addr_fnCallMain
-			<< ", WeatherSync=0x" << addr_WeatherSync
-			<< ", RemoteBomb=0x" << addr_RemoteBomb
-			<< ", TimeMgr=0x" << addr_TimeMgr;
+		ss << "BindHLEAddresses: OnActorCreate idx=0x" << std::hex << addr_OnActorCreate
+			<< ", fnCallMain idx=0x" << addr_fnCallMain
+			<< ", WeatherSync idx=0x" << addr_WeatherSync
+			<< ", RemoteBomb idx=0x" << addr_RemoteBomb
+			<< ", TimeMgr idx=0x" << addr_TimeMgr;
 		Logging::LoggerService::LogInformation(ss.str());
 	}
 
 	// 1. BotW_UKL_ActorInterceptor_V208 (Codecave default: 0x01808200)
-	if (addr_OnActorCreate >= 0x01000000 && addr_OnActorCreate != 0xFFFFFFFF)
+	BindSlot(Main::baseAddr + 0x0180822c, addr_OnActorCreate, "OnActorCreate");
+	BindSlot(Main::baseAddr + 0x01808244, addr_OnActorDeleteLater, "OnActorDeleteLater");
+	BindSlot(Main::baseAddr + 0x01808258, addr_OnActorErase, "OnActorErase");
+
+	// Dynamic scan around codecave range [0x01800000, 0x01900000]
+	uint8_t* pStart = (uint8_t*)(Main::baseAddr + 0x01800000);
+	const char targetStr[] = "ukl_actorinterceptor";
+	for (size_t offset = 0; offset < 0x20000; offset += 4)
 	{
-		Memory::write_bigEndian4Bytes(Main::baseAddr + 0x0180822c, addr_OnActorCreate, __FUNCTION__);
-		Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01808244, addr_OnActorDeleteLater, __FUNCTION__);
-		Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01808258, addr_OnActorErase, __FUNCTION__);
-
-		int readback = Memory::read_bigEndian4Bytes(Main::baseAddr + 0x0180822c, __FUNCTION__);
-		static bool s_loggedReadback = false;
-		if (!s_loggedReadback)
+		if (memcmp(pStart + offset, targetStr, sizeof(targetStr) - 1) == 0)
 		{
-			s_loggedReadback = true;
-			std::stringstream ss;
-			ss << "BindHLEAddresses Readback: OnActorCreate written=0x" << std::hex << addr_OnActorCreate
-				<< ", readback=0x" << readback
-				<< (readback == (int)addr_OnActorCreate ? " (VERIFIED MATCH)" : " (MISMATCH!)");
-			Logging::LoggerService::LogInformation(ss.str());
-		}
-
-		// Dynamic scan around codecave range [0x01800000, 0x01900000]
-		uint8_t* pStart = (uint8_t*)(Main::baseAddr + 0x01800000);
-		const char targetStr[] = "ukl_actorinterceptor";
-		for (size_t offset = 0; offset < 0x20000; offset += 4)
-		{
-			if (memcmp(pStart + offset, targetStr, sizeof(targetStr) - 1) == 0)
-			{
-				uint64_t modBase = Main::baseAddr + 0x01800000 + offset;
-				Memory::write_bigEndian4Bytes(modBase + 0x2C, addr_OnActorCreate, __FUNCTION__);
-				Memory::write_bigEndian4Bytes(modBase + 0x44, addr_OnActorDeleteLater, __FUNCTION__);
-				Memory::write_bigEndian4Bytes(modBase + 0x58, addr_OnActorErase, __FUNCTION__);
-				break;
-			}
+			uint64_t modBase = Main::baseAddr + 0x01800000 + offset;
+			BindSlot(modBase + 0x2C, addr_OnActorCreate, "OnActorCreate (scan)");
+			BindSlot(modBase + 0x44, addr_OnActorDeleteLater, "OnActorDeleteLater (scan)");
+			BindSlot(modBase + 0x58, addr_OnActorErase, "OnActorErase (scan)");
+			break;
 		}
 	}
 
 	// 2. BotW_SpawnActors_V208 (Codecave default: 0x01800000, offset 0x0)
-	if (addr_fnCallMain >= 0x01000000 && addr_fnCallMain != 0xFFFFFFFF)
+	BindSlot(Main::baseAddr + 0x01800000, addr_fnCallMain, "fnCallMain");
+
+	const char targetStrSpawn[] = "spawnactors";
+	for (size_t offset = 0; offset < 0x10000; offset += 4)
 	{
-		Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01800000, addr_fnCallMain, __FUNCTION__);
-
-		int readback_main = Memory::read_bigEndian4Bytes(Main::baseAddr + 0x01800000, __FUNCTION__);
-		static bool s_loggedReadbackMain = false;
-		if (!s_loggedReadbackMain)
+		if (memcmp(pStart + offset, targetStrSpawn, sizeof(targetStrSpawn) - 1) == 0)
 		{
-			s_loggedReadbackMain = true;
-			std::stringstream ss;
-			ss << "BindHLEAddresses Readback: fnCallMain written=0x" << std::hex << addr_fnCallMain
-				<< ", readback=0x" << readback_main
-				<< (readback_main == (int)addr_fnCallMain ? " (VERIFIED MATCH)" : " (MISMATCH!)");
-			Logging::LoggerService::LogInformation(ss.str());
-		}
-
-		uint8_t* pStart = (uint8_t*)(Main::baseAddr + 0x01800000);
-		const char targetStr[] = "spawnactors";
-		for (size_t offset = 0; offset < 0x10000; offset += 4)
-		{
-			if (memcmp(pStart + offset, targetStr, sizeof(targetStr) - 1) == 0)
+			if (offset >= 0x14)
 			{
-				if (offset >= 0x14)
-				{
-					Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01800000 + offset - 0x14, addr_fnCallMain, __FUNCTION__);
-				}
-				break;
+				BindSlot(Main::baseAddr + 0x01800000 + offset - 0x14, addr_fnCallMain, "fnCallMain (scan)");
 			}
+			break;
 		}
 	}
 
 	// 3. BotW_MPTesting_V208 (Codecave default: 0x01808a00, offset 0x0)
-	if (addr_WeatherSync >= 0x01000000 && addr_WeatherSync != 0xFFFFFFFF)
-	{
-		Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01808a00, addr_WeatherSync, __FUNCTION__);
+	BindSlot(Main::baseAddr + 0x01808a00, addr_WeatherSync, "WeatherSync");
 
-		uint8_t* pStart = (uint8_t*)(Main::baseAddr + 0x01800000);
-		const char targetStr[] = "WeatherSync";
-		for (size_t offset = 0; offset < 0x20000; offset += 4)
+	const char targetStrWeather[] = "WeatherSync";
+	for (size_t offset = 0; offset < 0x20000; offset += 4)
+	{
+		if (memcmp(pStart + offset, targetStrWeather, sizeof(targetStrWeather) - 1) == 0)
 		{
-			if (memcmp(pStart + offset, targetStr, sizeof(targetStr) - 1) == 0)
+			if (offset >= 4)
 			{
-				if (offset >= 4)
-				{
-					Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01800000 + offset - 4, addr_WeatherSync, __FUNCTION__);
-				}
-				break;
+				BindSlot(Main::baseAddr + 0x01800000 + offset - 4, addr_WeatherSync, "WeatherSync (scan)");
 			}
+			break;
 		}
 	}
 
 	// 4. BotW_UKL_RemoteBombAIInterceptor_V208 (Codecave default: 0x01808400, offset 0x28)
-	if (addr_RemoteBomb >= 0x01000000 && addr_RemoteBomb != 0xFFFFFFFF)
-	{
-		Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01808428, addr_RemoteBomb, __FUNCTION__);
-	}
+	BindSlot(Main::baseAddr + 0x01808428, addr_RemoteBomb, "RemoteBomb");
 
 	// 5. BotW_UKL_TimeMgrInterceptor_V208 (Codecave default: 0x01808500, offset 0x24)
-	if (addr_TimeMgr >= 0x01000000 && addr_TimeMgr != 0xFFFFFFFF)
-	{
-		Memory::write_bigEndian4Bytes(Main::baseAddr + 0x01808524, addr_TimeMgr, __FUNCTION__);
-	}
+	BindSlot(Main::baseAddr + 0x01808524, addr_TimeMgr, "TimeMgr");
 }
 

@@ -352,6 +352,27 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
                     {
                         try { File.Move(badPatch, badPatch + ".disabled", true); } catch { }
                     }
+
+                    // Ensure updated asm patches are copied from patches/
+                    string[] patchesToUpdate = { "patch_UKL_Utils_DynamicBranch.asm", "patch_SpawnActors.asm", "patch_Weather.asm" };
+                    foreach (string patchFile in patchesToUpdate)
+                    {
+                        string src = Path.Combine(AppContext.BaseDirectory, "patches", patchFile);
+                        if (!File.Exists(src)) src = Path.Combine(Directory.GetCurrentDirectory(), "patches", patchFile);
+                        if (!File.Exists(src)) src = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "patches", patchFile);
+                        if (File.Exists(src))
+                        {
+                            string dst = Path.Combine(graphicPackDir, patchFile);
+                            try
+                            {
+                                if (!File.Exists(dst) || File.GetLastWriteTimeUtc(src) > File.GetLastWriteTimeUtc(dst) || new FileInfo(src).Length != new FileInfo(dst).Length)
+                                {
+                                    File.Copy(src, dst, true);
+                                }
+                            }
+                            catch { }
+                        }
+                    }
                 }
 
                 // Ensure corrupt 173-byte dummy GameRomCamera.sbactorpack is disabled so original game camera loads

@@ -21,7 +21,7 @@ lwz r3, 4(r1)
 ; Check if we already have our dll func addr
 lwz r11, 0x0(r5) ; (HLELoc)
 cmpwi r11, 0x0
-bne UKL_Utils_DynamicBranch_CallDllFunc
+bne UKL_Utils_DynamicBranch_CallSlot
 
 ; We're gonna need to do some register juggling
 addi r1, r1, -16
@@ -87,3 +87,7 @@ addi r1, r1, 8
 
 li r3, 0x0
 blr
+
+UKL_Utils_DynamicBranch_CallSlot:
+mr r11, r5 ; r5 = &HLELoc, which holds the HLE opcode
+b UKL_Utils_DynamicBranch_CallDllFunc

@@ -25,8 +25,8 @@
 
 ## 2. Exhaustive Bug Analysis & Confirmed Root Causes
 
-### A. Post-Shader Crash: Access Violation `0xc0000005` at `IP = 0x000000b8`
-* **Symptom**: Game crashed ~1 second after shader compilation finished, right before the title screen.
+### A. HLE Hook Dispatch Architecture & Crash `0xc0000005` at `IP = 0x000000b8`
+* **Symptom**: Game crashed ~1 second after shader compilation finished, or custom hooks (`OnActorCreate`, `fnCallMain`, `WeatherSync`) never executed.
 * **Cemu Crash Log (`log.txt`)**:
   ```
   Exception 0xc0000005 at 0x7ff746569a90(+0x2c9a90) in module Cemu.exe
@@ -38,12 +38,25 @@
 * **Reverse-Engineering Finding**:
   - `0x0365ec84` is hooked by `patch_UKL_TimeMgrInterceptor.asm` (`UKL_TimeMgrInterceptor_OnInit`).
   - `UKL_TimeMgrInterceptor_OnInit` calls `UKL_Utils_DynamicBranch` in `patch_UKL_Utils_DynamicBranch.asm` (`0x01808600`).
-  - Line 69 of `patch_UKL_Utils_DynamicBranch.asm` performs `mtctr r11; bctrl`, where `r11` was loaded from `HLELoc` (`lwz r11, 0x0(r5)`).
-  - `BindHLEAddresses()` in `SpawningVariables.h` previously called `osLib_getHLEFunctionAddress` and wrote the returned value into `HLELoc`.
-  - **Disassembly of Cemu 2.6 at RVA `0x1FC1E0` revealed that `osLib_getHLEFunctionAddress` does NOT return a PPC instruction address!** It returns an internal 32-bit integer **HLE table index** (e.g. `0xb8`, `0xb6`, `0xbb`).
-  - Writing `0xb8` into `HLELoc` caused PPC to execute `bctrl` to address `0x000000b8` (unmapped zero-page), causing an immediate memory access violation `0xc0000005`.
-* **Fix Applied**:
-  - In `SpawningVariables.h`, added a strict guard: only write to codecave locations if the address is a valid guest memory address (`addr >= 0x01000000 && addr != 0xFFFFFFFF`). Small indices are never written into guest execution memory.
+  - Disassembly of Cemu 2.6 at RVA `0x1FC1E0` (`osLib_getHLEFunctionAddress`) revealed that it returns an internal 32-bit integer **HLE table index** (`0xb8`, `0xb6`, `0xbb`), NOT a guest PPC code pointer!
+  - Writing `0xb8` into `HLELoc` caused PPC to execute `bctrl` to address `0x000000b8` (unmapped zero-page), causing crash `0xc0000005`.
+  - Guarding against `addr < 0x01000000` prevented writing altogether, leaving `HLELoc == 0`. As a result, the hooks never bound and `OnActorCreate` never fired!
+* **How Cemu 2.6 Executes Guest HLE Calls**:
+  - In Cemu, custom HLE calls are encoded as PowerPC opcode 1: `(1 << 26) | idx` (`0x04000000 | idx`).
+  - When PPC executes at an address containing `0x04000000 | idx`, Cemu intercepts opcode 1 and dispatches the native C++ HLE callback for index `idx`.
+  - In the C++ callback, returning sets `regs->instructionPointer = regs->sprNew.LR;`. Cemu sets PPC's instruction pointer directly to `LR`, returning to the caller with no trailing `blr` instruction required.
+* **Complete Solution Implemented**:
+  1. **`patch_UKL_Utils_DynamicBranch.asm`**:
+     - Fast path: `lwz r11, 0x0(r5); cmpwi r11, 0; bne UKL_Utils_DynamicBranch_CallSlot`.
+     - `UKL_Utils_DynamicBranch_CallSlot`: `mr r11, r5` (sets `r11 = &HLELoc`, which holds the opcode) and branches to `CallDllFunc`.
+     - `CallDllFunc` loads `CTR = &HLELoc` and calls `bctrl`. PPC executes the opcode at `&HLELoc`, Cemu executes the callback, and returns to line 71 (`Return_True`).
+  2. **`patch_SpawnActors.asm` & `patch_Weather.asm`**:
+     - Updated `CallDllFunc` to compute `&HLELoc` via `addi r11, r11, HLELoc@l` instead of dereferencing `lwz`, branching directly to the opcode at `&HLELoc`.
+  3. **`BindSlot` in `SpawningVariables.h`**:
+     - Encodes `op = (int)(0x04000000u | idx)`.
+     - Checks if current memory matches `op`; writes only on mismatch and verifies readback. Continually rewrites if Cemu reinitializes graphic pack `.int 0` memory.
+  4. **Stable Registration in `init()`**:
+     - Guarded by `static bool s_initialized` to register with Cemu exactly once, ensuring HLE table indices remain permanent and avoiding recompiler cache churn.
 
 ---
 
