@@ -26,11 +26,18 @@ uint64_t Memory::PatternScan(std::vector<int> signature, uint64_t baseAddr, int 
 
     MEMORY_BASIC_INFORMATION Scanmbi{ 0 };
     DWORD protectflags = (PAGE_GUARD | PAGE_NOCACHE | PAGE_NOACCESS);
+    DWORD readable = (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY);
 
     int contador = 1;
     for (uint64_t i = startAddress; i < endAddress - signature.size();) {
         if (VirtualQuery((LPCVOID)i, &Scanmbi, sizeof(Scanmbi))) {
-            if (Scanmbi.Protect & protectflags || !(Scanmbi.State & MEM_COMMIT)) {
+            if (Scanmbi.RegionSize == 0 || Scanmbi.RegionSize <= signature.size()) {
+                i += (Scanmbi.RegionSize ? Scanmbi.RegionSize : 0x1000);
+                contador++;
+                continue;
+            }
+
+            if (Scanmbi.Protect & protectflags || !(Scanmbi.Protect & readable) || !(Scanmbi.State & MEM_COMMIT)) {
                 i += Scanmbi.RegionSize;
 
                 contador++;
@@ -144,11 +151,18 @@ std::vector<uint64_t> Memory::PatternScanMultiple(std::vector<int> signature, ui
 
     MEMORY_BASIC_INFORMATION mbi{ 0 };
     DWORD protectflags = (PAGE_GUARD | PAGE_NOCACHE | PAGE_NOACCESS);
+    DWORD readable = (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY);
 
     int contador = 1;
     for (uint64_t i = startAddress; i < endAddress - signature.size();) {
         if (VirtualQuery((LPCVOID)i, &mbi, sizeof(mbi))) {
-            if (mbi.Protect & protectflags || !(mbi.State & MEM_COMMIT)) {
+            if (mbi.RegionSize == 0 || mbi.RegionSize <= signature.size()) {
+                i += (mbi.RegionSize ? mbi.RegionSize : 0x1000);
+                contador++;
+                continue;
+            }
+
+            if (mbi.Protect & protectflags || !(mbi.Protect & readable) || !(mbi.State & MEM_COMMIT)) {
                 i += mbi.RegionSize;
 
                 contador++;

@@ -350,118 +350,129 @@ Weather newWeather = (Weather)0;
 
 void ProcessActorSpawnsInWeather(PPCInterpreter_t* hCPU, uint32_t mapAddr)
 {
-	if (s_startTrnsDataGuestAddr == 0 || Main::baseAddr == 0 || !memInstance || mapAddr == 0)
+	if (!hCPU || Main::baseAddr == 0 || !memInstance || mapAddr == 0)
 		return;
 
-	std::unique_lock<std::shared_mutex> qLock(queue_mutex, std::try_to_lock);
-	if (!qLock.owns_lock() || queuedActors.empty())
-		return;
-
-	// Check if previous spawn is still pending execution in patch_Weather.asm
-	uint32_t spawnPending = Memory::read_bigEndian4Bytes(Main::baseAddr + mapAddr + 12);
-	if (spawnPending != 0)
-		return;
-
-	data_mutex.lock();
-	TransferableData trnsData;
-	memInstance->memory_readMemoryBE(s_startTrnsDataGuestAddr, &trnsData, Main::baseAddr);
-
-	if (trnsData.f_r3 == 0 || (trnsData.f_r7 == 0 && !s_hasCachedActorStorage))
+	if (s_startTrnsDataGuestAddr == 0)
 	{
-		if (!trnsData.interceptRegisters)
+		s_startTrnsDataGuestAddr = 0x01808020;
+		s_storageStartGuestAddr = 0x01800020;
+		s_storageEndGuestAddr = 0x01808020;
+	}
+
+	try
+	{
+		std::unique_lock<std::shared_mutex> qLock(queue_mutex, std::try_to_lock);
+		if (!qLock.owns_lock() || queuedActors.empty())
+			return;
+
+		// Check if previous spawn is still pending execution in patch_Weather.asm
+		uint32_t spawnPending = Memory::read_bigEndian4Bytes(Main::baseAddr + mapAddr + 12);
+		if (spawnPending != 0)
+			return;
+
+		data_mutex.lock();
+		TransferableData trnsData;
+		memInstance->memory_readMemoryBE(s_startTrnsDataGuestAddr, &trnsData, Main::baseAddr);
+
+		if (trnsData.f_r3 == 0 || (trnsData.f_r7 == 0 && !s_hasCachedActorStorage))
 		{
-			trnsData.interceptRegisters = true;
-			memInstance->memory_writeMemoryBE(s_startTrnsDataGuestAddr, trnsData, Main::baseAddr);
+			if (!trnsData.interceptRegisters)
+			{
+				trnsData.interceptRegisters = true;
+				memInstance->memory_writeMemoryBE(s_startTrnsDataGuestAddr, trnsData, Main::baseAddr);
+			}
+			data_mutex.unlock();
+			return;
 		}
+
+		QueueActor qAct = queuedActors[0];
+
+		InstanceData instData;
+		if (!s_hasCachedActorStorage && trnsData.f_r7 != 0)
+		{
+			memInstance->memory_readMemoryBE(trnsData.f_r7, &instData.actorStorage, Main::baseAddr);
+			memcpy(s_cachedActorStorage, instData.actorStorage, sizeof(s_cachedActorStorage));
+			s_hasCachedActorStorage = true;
+		}
+		else if (s_hasCachedActorStorage)
+		{
+			memcpy(instData.actorStorage, s_cachedActorStorage, sizeof(instData.actorStorage));
+		}
+
+		int actorStorageLocation = trnsData.ringPtr + sizeof(instData) - sizeof(instData.name) - sizeof(instData.actorStorage);
+		int mubinLocation = trnsData.ringPtr + sizeof(instData) - sizeof(instData.name) - sizeof(instData.actorStorage) + (7 * 4);
+
+		// Set actor pos to stored pos
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (15 * 4)], &qAct.PosX, sizeof(float));
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (16 * 4)], &qAct.PosY, sizeof(float));
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (17 * 4)], &qAct.PosZ, sizeof(float));
+
+		float traverseDist = 0.f;
+		short traverseDistInt = (short)traverseDist;
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (18 * 4)], &traverseDist, sizeof(float));
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (37 * 2)], &traverseDistInt, sizeof(short));
+
+		int null = 0;
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (11 * 4)], &null, sizeof(int));
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (9 * 4)], &null, sizeof(int));
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (10 * 4)], &null, sizeof(int));
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (7 * 4)], &null, sizeof(int));
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (3 * 4)], &null, sizeof(int));
+
+		int traverseDistFixer = 0x043B0000;
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (2 * 4)], &traverseDistFixer, sizeof(int));
+		int traverseDistFixer2 = 0x00000016;
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (1 * 4)], &traverseDistFixer2, sizeof(int));
+
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (14 * 4)], &null, sizeof(int));
+
+		int invalid = -1;
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (12 * 4)], &invalid, sizeof(int));
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (13 * 4)], &invalid, sizeof(int));
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (8 * 4)], &invalid, sizeof(int));
+
+		int pos = sizeof(instData.name) - 1;
+		for (char const& c : qAct.Name)
+		{
+			memcpy(instData.name + pos, &c, 1);
+			pos--;
+		}
+		uint8_t nullByte = 0;
+		memcpy(instData.name + pos, &nullByte, 1);
+
+		memInstance->memory_writeMemoryBE(trnsData.ringPtr, instData, Main::baseAddr);
+
+		int nameLocation = trnsData.ringPtr + sizeof(instData) - sizeof(instData.name);
+
+		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 16, trnsData.f_r3);
+		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 20, nameLocation);
+		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 24, trnsData.f_r5 ? trnsData.f_r5 : 0xFFFFFFFF);
+		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 28, mubinLocation);
+		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 32, actorStorageLocation);
+		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 36, 0);
+		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 40, 1);
+		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 44, 0);
+
+		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 12, 1);
+
+		trnsData.ringPtr += sizeof(InstanceData);
+		if (s_storageEndGuestAddr != 0 && trnsData.ringPtr >= (int)s_storageEndGuestAddr)
+			trnsData.ringPtr = s_storageStartGuestAddr;
+
+		memInstance->memory_writeMemoryBE(s_startTrnsDataGuestAddr, trnsData, Main::baseAddr);
 		data_mutex.unlock();
-		return;
+
+		std::stringstream ss;
+		ss << "ProcessActorSpawnsInWeather: Dispatched createActor_ for '" << qAct.Name << "' at ("
+		   << qAct.PosX << ", " << qAct.PosY << ", " << qAct.PosZ << ") nameAddr=0x"
+		   << std::hex << nameLocation << " actorStorage=0x" << actorStorageLocation
+		   << " mubin=0x" << mubinLocation << " r3=0x" << trnsData.f_r3;
+		Logging::LoggerService::LogInformation(ss.str(), __FUNCTION__);
+
+		queuedActors.erase(queuedActors.begin());
 	}
-
-	QueueActor qAct = queuedActors[0];
-
-	InstanceData instData;
-	if (!s_hasCachedActorStorage && trnsData.f_r7 != 0)
-	{
-		memInstance->memory_readMemoryBE(trnsData.f_r7, &instData.actorStorage, Main::baseAddr);
-		memcpy(s_cachedActorStorage, instData.actorStorage, sizeof(s_cachedActorStorage));
-		s_hasCachedActorStorage = true;
-	}
-	else if (s_hasCachedActorStorage)
-	{
-		memcpy(instData.actorStorage, s_cachedActorStorage, sizeof(instData.actorStorage));
-	}
-
-	int actorStorageLocation = trnsData.ringPtr + sizeof(instData) - sizeof(instData.name) - sizeof(instData.actorStorage);
-	int mubinLocation = trnsData.ringPtr + sizeof(instData) - sizeof(instData.name) - sizeof(instData.actorStorage) + (7 * 4);
-
-	// Set actor pos to stored pos
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (15 * 4)], &qAct.PosX, sizeof(float));
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (16 * 4)], &qAct.PosY, sizeof(float));
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (17 * 4)], &qAct.PosZ, sizeof(float));
-
-	float traverseDist = 0.f;
-	short traverseDistInt = (short)traverseDist;
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (18 * 4)], &traverseDist, sizeof(float));
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (37 * 2)], &traverseDistInt, sizeof(short));
-
-	int null = 0;
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (11 * 4)], &null, sizeof(int));
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (9 * 4)], &null, sizeof(int));
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (10 * 4)], &null, sizeof(int));
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (7 * 4)], &null, sizeof(int));
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (3 * 4)], &null, sizeof(int));
-
-	int traverseDistFixer = 0x043B0000;
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (2 * 4)], &traverseDistFixer, sizeof(int));
-	int traverseDistFixer2 = 0x00000016;
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (1 * 4)], &traverseDistFixer2, sizeof(int));
-
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (14 * 4)], &null, sizeof(int));
-
-	int invalid = -1;
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (12 * 4)], &invalid, sizeof(int));
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (13 * 4)], &invalid, sizeof(int));
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (8 * 4)], &invalid, sizeof(int));
-
-	int pos = sizeof(instData.name) - 1;
-	for (char const& c : qAct.Name)
-	{
-		memcpy(instData.name + pos, &c, 1);
-		pos--;
-	}
-	uint8_t nullByte = 0;
-	memcpy(instData.name + pos, &nullByte, 1);
-
-	memInstance->memory_writeMemoryBE(trnsData.ringPtr, instData, Main::baseAddr);
-
-	int nameLocation = trnsData.ringPtr + sizeof(instData) - sizeof(instData.name);
-
-	Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 16, trnsData.f_r3);
-	Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 20, nameLocation);
-	Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 24, trnsData.f_r5 ? trnsData.f_r5 : 0xFFFFFFFF);
-	Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 28, mubinLocation);
-	Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 32, actorStorageLocation);
-	Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 36, 0);
-	Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 40, 1);
-	Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 44, 0);
-
-	Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 12, 1);
-
-	trnsData.ringPtr += sizeof(InstanceData);
-	if (s_storageEndGuestAddr != 0 && trnsData.ringPtr >= (int)s_storageEndGuestAddr)
-		trnsData.ringPtr = s_storageStartGuestAddr;
-
-	memInstance->memory_writeMemoryBE(s_startTrnsDataGuestAddr, trnsData, Main::baseAddr);
-	data_mutex.unlock();
-
-	std::stringstream ss;
-	ss << "ProcessActorSpawnsInWeather: Dispatched createActor_ for '" << qAct.Name << "' at ("
-	   << qAct.PosX << ", " << qAct.PosY << ", " << qAct.PosZ << ") nameAddr=0x"
-	   << std::hex << nameLocation << " actorStorage=0x" << actorStorageLocation
-	   << " mubin=0x" << mubinLocation << " r3=0x" << trnsData.f_r3;
-	Logging::LoggerService::LogInformation(ss.str(), __FUNCTION__);
-
-	queuedActors.erase(queuedActors.begin());
+	catch (...) {}
 }
 
 void WeatherFn(PPCInterpreter_t* hCPU) {
@@ -473,21 +484,24 @@ void WeatherFn(PPCInterpreter_t* hCPU) {
 		Logging::LoggerService::LogInformation("WeatherFn HLE invoked by Cemu.");
 	}
 
-	if (Main::baseAddr == 0 || !memInstance || !Game::GameInstance || !Game::GameInstance->World)
+	if (Main::baseAddr == 0 || !memInstance)
 		return;
 
-	Game::GameInstance->World->LocalWeather = (int)(Weather)hCPU->gpr[26];
-	newWeather = (Weather)Game::GameInstance->World->Weather;
+	if (Game::GameInstance && Game::GameInstance->World)
+	{
+		Game::GameInstance->World->LocalWeather = (int)(Weather)hCPU->gpr[26];
+		newWeather = (Weather)Game::GameInstance->World->Weather;
 
-	memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 0, (char)newWeather, Main::baseAddr);
-	memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 1, (char)newWeather, Main::baseAddr);
-	memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 2, (char)newWeather, Main::baseAddr);
-	memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 3, (char)newWeather, Main::baseAddr);
-	memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 4, (char)newWeather, Main::baseAddr);
-	memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 5, (char)newWeather, Main::baseAddr);
-	memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 6, (char)newWeather, Main::baseAddr);
-	memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 7, (char)newWeather, Main::baseAddr);
-	memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 8, (char)newWeather, Main::baseAddr);
+		memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 0, (char)newWeather, Main::baseAddr);
+		memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 1, (char)newWeather, Main::baseAddr);
+		memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 2, (char)newWeather, Main::baseAddr);
+		memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 3, (char)newWeather, Main::baseAddr);
+		memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 4, (char)newWeather, Main::baseAddr);
+		memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 5, (char)newWeather, Main::baseAddr);
+		memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 6, (char)newWeather, Main::baseAddr);
+		memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 7, (char)newWeather, Main::baseAddr);
+		memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 8, (char)newWeather, Main::baseAddr);
+	}
 
 	ProcessActorSpawnsInWeather(hCPU, hCPU->gpr[3]);
 }
@@ -1061,6 +1075,7 @@ void BindHLEAddresses()
 	}
 
 	// 2. BotW_SpawnActors_V208 (Codecave default: 0x01800000, offset 0x0)
+	uint32_t spawnActorsGuestBase = 0x01800000;
 	BindSlot(Main::baseAddr + 0x01800000, addr_fnCallMain, "fnCallMain");
 
 	const char targetStrSpawn[] = "spawnactors";
@@ -1070,11 +1085,20 @@ void BindHLEAddresses()
 		{
 			if (offset >= 0x14)
 			{
-				BindSlot(Main::baseAddr + 0x01800000 + offset - 0x14, addr_fnCallMain, "fnCallMain (scan)");
+				spawnActorsGuestBase = 0x01800000 + (uint32_t)(offset - 0x14);
+				BindSlot(Main::baseAddr + spawnActorsGuestBase, addr_fnCallMain, "fnCallMain (scan)");
 			}
 			break;
 		}
 	}
+
+	s_storageStartGuestAddr = spawnActorsGuestBase + 0x20;
+	s_storageEndGuestAddr = spawnActorsGuestBase + 0x8020;
+	s_startTrnsDataGuestAddr = spawnActorsGuestBase + 0x8020;
+
+	// Enable register interception immediately so createActor_ captures r3..r10 on the very first actor created!
+	Memory::write_byte(Main::baseAddr + s_startTrnsDataGuestAddr + 1, 1, "BindHLEAddresses::InterceptRegisters");
+	Logging::LoggerService::LogInformation("Initialized spawn storage: start=0x" + std::to_string(s_storageStartGuestAddr) + ", trnsData=0x" + std::to_string(s_startTrnsDataGuestAddr));
 
 	// 3. BotW_MPTesting_V208 (Codecave default: 0x01808a00, offset 0x0)
 	BindSlot(Main::baseAddr + 0x01808a00, addr_WeatherSync, "WeatherSync");

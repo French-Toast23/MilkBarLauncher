@@ -18,10 +18,6 @@ namespace DataTypes
 			std::vector<int> signature = { 0x5F, 0x28, 0x32, 0x89, -1, -1, -1, -1, 0x5F, 0x28, 0x32, 0x89 };
 
 			uint64_t addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, 0);
-			if (addr < 30000)
-			{
-				addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 0, 0, false, false);
-			}
 
 			int retries = 0;
 			while (addr < 30000 && retries < 2)
@@ -44,10 +40,6 @@ namespace DataTypes
 			signature = { 0x82, 0x48, 0x92, 0xBE, -1, -1, -1, -1, 0x82, 0x48, 0x92, 0xBE };
 
 			addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, 0);
-			if (addr < 30000)
-			{
-				addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 0, 0, false, false);
-			}
 
 			retries = 0;
 			while (addr < 30000 && retries < 2)

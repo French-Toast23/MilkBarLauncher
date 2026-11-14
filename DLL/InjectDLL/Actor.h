@@ -33,30 +33,31 @@ namespace MemoryAccess
 
 			if (addr != 0)
 			{
-				uint64_t posAddr = 0;
-				for (int retries = 0; retries < 10; retries++)
-				{
-					posAddr = Memory::ReadPointers(baseAddr, { 0x3A0, 0x50, 0x4, 0x80, 0x0, 0x5C, 0x18 }, true) + 0x50;
-					if (posAddr >= 30000)
-						break;
-					Sleep(10);
-				}
+				uint64_t posAddr = Memory::ReadPointers(baseAddr, { 0x3A0, 0x50, 0x4, 0x80, 0x0, 0x5C, 0x18 }, true) + 0x50;
 
-				if (posAddr < 30000)
+				if (posAddr >= 30000)
 				{
-					Logging::LoggerService::LogWarning("Actor::setAddress: Could not resolve posAddr for actor 0x" + std::to_string(baseAddr), "Actor");
-					baseAddr = 0;
-					return;
+					Position->setAddress(posAddr, "Position", true);
+					Position2->setAddress(posAddr - 0x10, "Position2", false);
+					Position3->setAddress(posAddr - 0x20, "Position3", false);
+					Rotation1->setAddress(posAddr - 0x30, "Rotation1", false);
+					Rotation2->setAddress(posAddr - 0x40, "Rotation2", false);
+					Rotation3->setAddress(posAddr - 0x50, "Rotation3", false);
+					Rotation4->setAddress(posAddr + 0x10, "Rotation4", false);
+					Rotation5->setAddress(posAddr + 0x20, "Rotation5", false);
 				}
-
-				Position->setAddress(posAddr, "Position", true);
-				Position2->setAddress(posAddr - 0x10, "Position2", false);
-				Position3->setAddress(posAddr - 0x20, "Position3", false);
-				Rotation1->setAddress(posAddr - 0x30, "Rotation1", false);
-				Rotation2->setAddress(posAddr - 0x40, "Rotation2", false);
-				Rotation3->setAddress(posAddr - 0x50, "Rotation3", false);
-				Rotation4->setAddress(posAddr + 0x10, "Rotation4", false);
-				Rotation5->setAddress(posAddr + 0x20, "Rotation5", false);
+				else
+				{
+					Logging::LoggerService::LogWarning("Actor::setAddress: posAddr not yet ready for actor 0x" + std::to_string(baseAddr), "Actor");
+					Position->setAddress(0, "Position");
+					Position2->setAddress(0, "Position2");
+					Position3->setAddress(0, "Position3");
+					Rotation1->setAddress(0, "Rotation1");
+					Rotation2->setAddress(0, "Rotation2");
+					Rotation3->setAddress(0, "Rotation3");
+					Rotation4->setAddress(0, "Rotation4");
+					Rotation5->setAddress(0, "Rotation5");
+				}
 			}
 			else
 			{
@@ -69,6 +70,27 @@ namespace MemoryAccess
 				Rotation4->setAddress(0, "Rotation4");
 				Rotation5->setAddress(0, "Rotation5");
 			}
+		}
+
+		bool resolvePosition()
+		{
+			if (baseAddr == 0) return false;
+			if (Position && Position->isAddressSet()) return true;
+			uint64_t posAddr = Memory::ReadPointers(baseAddr, { 0x3A0, 0x50, 0x4, 0x80, 0x0, 0x5C, 0x18 }, true) + 0x50;
+			if (posAddr >= 30000)
+			{
+				Position->setAddress(posAddr, "Position", true);
+				Position2->setAddress(posAddr - 0x10, "Position2", false);
+				Position3->setAddress(posAddr - 0x20, "Position3", false);
+				Rotation1->setAddress(posAddr - 0x30, "Rotation1", false);
+				Rotation2->setAddress(posAddr - 0x40, "Rotation2", false);
+				Rotation3->setAddress(posAddr - 0x50, "Rotation3", false);
+				Rotation4->setAddress(posAddr + 0x10, "Rotation4", false);
+				Rotation5->setAddress(posAddr + 0x20, "Rotation5", false);
+				Logging::LoggerService::LogInformation("Actor::resolvePosition: Successfully resolved posAddr for actor 0x" + std::to_string(baseAddr), "Actor");
+				return true;
+			}
+			return false;
 		}
 
 		void Teleport(Vec3f newPosition)

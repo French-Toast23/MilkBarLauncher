@@ -244,7 +244,7 @@ namespace MemoryAccess
 
 		void setAddress(uint64_t addr)
 		{
-			Actor::setAddress(addr);
+			this->baseAddr = addr;
 		}
 
 		void scan()
@@ -331,7 +331,7 @@ namespace MemoryAccess
 				(int)((hash >> 8) & 0xFF),
 				(int)(hash & 0xFF)
 			};
-			uint64_t found = Memory::PatternScan(hashSig, Memory::getBaseAddress(), 0, 0, false, false);
+			uint64_t found = Memory::PatternScan(hashSig, Memory::getBaseAddress(), 8, 0);
 			if (found >= 30000)
 			{
 				std::stringstream ss;

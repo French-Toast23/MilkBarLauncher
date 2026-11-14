@@ -22,10 +22,6 @@ namespace DataTypes
 			try
 			{
 				addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, 0);
-				if (addr < 30000)
-				{
-					addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 0, 0, false, false);
-				}
 			}
 			catch (...)
 			{

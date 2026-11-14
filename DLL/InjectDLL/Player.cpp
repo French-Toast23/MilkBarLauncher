@@ -182,6 +182,15 @@ void Player::PThread()
 				continue;
 			}
 
+			if (!this->Position || !this->Position->isAddressSet())
+			{
+				if (!this->resolvePosition())
+				{
+					Sleep(50);
+					continue;
+				}
+			}
+
 			//TODO: Bring targetFPS
 			this->Teleport(Helper::Extrapolation::Next(this->Position->LastKnown, this->Speed, (1000 / 60 - FunctionTime) / 1000)); //Substracting FunctionTime to be as close to 60 fps as posible.
 			this->Bomb->reset();
@@ -197,14 +206,14 @@ void Player::PThread()
 		catch (const std::exception& ex)
 		{
 			std::stringstream stream;
-			stream << "Exception thrown: " << ex.what();
-			Logging::LoggerService::LogError(stream.str(), __FUNCTION__);
-			exit(1);
+			stream << "Exception in Player::PThread: " << ex.what();
+			Logging::LoggerService::LogWarning(stream.str(), __FUNCTION__);
+			Sleep(100);
 		}
 		catch (...)
 		{
-			Logging::LoggerService::LogError("Catched unknown exception.", __FUNCTION__);
-			exit(1);
+			Logging::LoggerService::LogWarning("Caught unknown exception in Player::PThread.", __FUNCTION__);
+			Sleep(100);
 		}
 	}
 
