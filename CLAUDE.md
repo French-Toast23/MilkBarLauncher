@@ -105,27 +105,29 @@
 
 ---
 
-### F. Popup "Failed to find mod address... Make sure mod is installed correctly in BCML"
-* **Symptom**: In-game camera works and Link is controllable, but after ~15 seconds of gameplay, a popup appears:
-  `"Failed to find mod address. Make sure that the mod is installed correctly in BCML and that BCML, Extended Memory and Multiplayer Utilities graphics packs are enabled."`
-  Both instances disconnect.
-* **Root Cause**:
+### F. Popup "Failed to find mod address... Make sure mod is installed correctly in BCML" & Save Loading Crash `0xc0000005` at `IP = 0x03208cec`
+* **Symptoms**:
+  1. In-game popup: `"Failed to find mod address. Make sure that the mod is installed correctly in BCML and that BCML, Extended Memory and Multiplayer Utilities graphics packs are enabled."`
+  2. Or Cemu closes immediately after shader compilation (`0xc0000005` at `IP 0x03208cec LR 0x034dd6f8`) when selecting the user account (`IOSU_ACT: using account <Name> in first slot`).
+* **Root Causes**:
   - `InjectDLL` does not hook custom memory for player names, statuses, and equipment; instead, it reads/writes custom `GameData` parameters managed by BotW's internal `GameDataMgr`.
   - In `LocalInstance.h` (line 250):
     `NotPaused = new LittleEndian<bool>({ 0x93, 0x9B, 0xE2, 0xB9, 0x00, -1, 0x00, 0x00, 0x10, 0x29, 0x84, 0x10 }, -0x1, "Memory::LocalInstance::scan::NotPaused", 0);`
-  - In `scratch/logs/gamedata.yml` (from `MilkBarLauncher.bnp`):
-    `notPaused` has CRC32 `HashValue: -1818500423` (unsigned `0x939BE2B9`)!
-  - Likewise, `Jugador10_DispNameFlag` = `0x82CBCC60`, `Jugador10_Status` = `0x8768FA81`, `Jugador10_Name` = `0xF2A5D4A2`.
-  - These are **GameData & SaveData flags** that BCML merges into `GameData/gamedata.ssarc` and `GameData/savedataformat.ssarc` inside `Bootup.pack`.
-  - Because `content/Pack/Bootup.pack` in the graphic pack was unmerged vanilla, BotW's `GameDataMgr` never initialized these flags in heap memory (`0x10298410`), causing `PatternScan` to fail after 15 retries.
+  - In `gamedata.yml` (from `MilkBarLauncher.bnp`):
+    `notPaused` has CRC32 `HashValue: -1818500423` (unsigned `0x939BE2B9`). Likewise, `Jugador10_DispNameFlag` = `0x82CBCC60`, `Jugador10_Status` = `0x8768FA81`, `Jugador10_Name` = `0xF2A5D4A2`.
+  - These are **GameData flags** stored inside `GameData/gamedata.ssarc` within `content/Pack/Bootup.pack`.
+  - If `Bootup.pack` does not define these flags, BotW's `GameDataMgr` never allocates them in heap memory (`0x10298410`), causing `PatternScan` to fail after 15 retries.
+  - **CRITICAL CAVEAT (`savedataformat.ssarc` vs `gamedata.ssarc`)**:
+    - Do **NOT** modify or re-sort `GameData/savedataformat.ssarc`. Existing user save files (`game_data.sav`) index saved fields strictly by their exact offset and chunk in `saveformat_0..5.bgsvdata` (for instance, `PlayReport_PlayTime` at index 660 of `saveformat_5`). Shifting entries corrupts save parsing, causing a NULL pointer dereference (`lwz r3, 0x10(rA)` where `rA == 0`, guest IP `0x03208cec`).
+    - Custom multiplayer flags MUST have `IsSave: False` in `gamedata.ssarc`. This instructs `GameDataMgr` to instantiate the flags in RAM without requiring them in `game_data.sav` on disk, eliminating save corruption and crashes while allowing `InjectDLL` to locate all flags cleanly.
 * **Fix Applied**:
-  - Merged all 89 `bool_data` flags into `bool_data_2.bgdata` (total 1,461).
-  - Merged all 68 `s32_data` flags into `s32_data_0.bgdata` (total 2,776).
-  - Merged all 34 `string_data` flags into `string32_data_0.bgdata` (total 40).
-  - Merged all 101 `savedata` flags into `savedataformat.ssarc`, sorted strictly ascending by signed 32-bit `HashValue`, re-chunked across `saveformat_0..5.bgsvdata` (total 43,768).
-  - Repacked `gamedata.ssarc` and `savedataformat.ssarc` into `Bootup.pack` (29,026,976 bytes).
-  - Saved to `patches/Bootup.pack` and `Build/patches/Bootup.pack`.
-  - Added automatic verification and synchronization in `BcmlSettings.ValidateAndFixGraphicPack()` so `Bootup.pack` is copied to `%APPDATA%\Cemu\graphicPacks\BreathOfTheWild_Multiplayer\content\Pack\Bootup.pack` if missing or differing in length/timestamp.
+  - Merged all 89 `bool_data` flags into `bool_data_2.bgdata` (with `IsSave: False`).
+  - Merged all 67 `s32_data` flags into `s32_data_0.bgdata` (with `IsSave: False`).
+  - Merged all 34 `string_data` flags into `string32_data_0.bgdata` (with `IsSave: False`).
+  - Kept `GameData/savedataformat.ssarc` 100% pristine vanilla from `mlc01`.
+  - Injected BNP mod files (`ModelDivideTable.sbyml`, `AIDef_Game.product.sbyml`, `EventInfo.product.sbyml`, `Static.smubin`, etc.) into `Bootup.pack`.
+  - Deployed `Bootup.pack` to `%APPDATA%\Cemu\graphicPacks\BreathOfTheWild_Multiplayer\content\Pack\Bootup.pack`, `patches/Bootup.pack`, and `Build/patches/Bootup.pack`.
+  - Updated `BcmlSettings.cs` to auto-synchronize `Bootup.pack`.
 
 ---
 
