@@ -150,7 +150,6 @@ void queueActor(int playerNumber, float Position[3])
 
 void queueActor(std::string actorName, float Position[3])
 {
-
 	QueueActor queueActor;
 	queueActor.Name = actorName;
 	queueActor.PosX = Position[0];
@@ -158,7 +157,7 @@ void queueActor(std::string actorName, float Position[3])
 	queueActor.PosZ = Position[2];
 
 	queuedActors.push_back(queueActor);
-
+	Logging::LoggerService::LogInformation("Queued actor '" + actorName + "' at (" + std::to_string(Position[0]) + ", " + std::to_string(Position[1]) + ", " + std::to_string(Position[2]) + "). Queue size: " + std::to_string(queuedActors.size()), __FUNCTION__);
 }
 
 void setupActor(PPCInterpreter_t* hCPU, TransferableData& trnsData, InstanceData& instData, uint32_t startRingBuffer, uint32_t endRingBuffer, uint64_t baseAddress) {
@@ -247,6 +246,13 @@ void setupActor(PPCInterpreter_t* hCPU, TransferableData& trnsData, InstanceData
 	trnsData.enabled = true; // This tells the assembly patch to trigger one function call
 
 	trnsData.interceptRegisters = false; // We don't want to intercept *this* function call
+
+	std::stringstream ss;
+	ss << "setupActor: Invoking createActor_ for '" << qAct.Name << "' at ("
+	   << qAct.PosX << ", " << qAct.PosY << ", " << qAct.PosZ << ") fn=0x037b6040 ringPtr=0x"
+	   << std::hex << trnsData.ringPtr << " actorStorage=0x" << actorStorageLocation
+	   << " mubin=0x" << mubinLocation;
+	Logging::LoggerService::LogInformation(ss.str(), __FUNCTION__);
 
 	// Write our actor data!
 	data_mutex.lock(); ////////////////////////////////////////////////////
@@ -389,7 +395,25 @@ void OnActorCreate(PPCInterpreter_t* hCPU)
 		Logging::LoggerService::LogInformation(stream.str());
 		Main::s_LocalLinkAddr = hCPU->gpr[3];
 		if (Game::GameInstance)
+		{
 			Game::GameInstance->setAddress(hCPU->gpr[3]);
+			if (started)
+			{
+				try
+				{
+					std::map<int, MemoryAccess::LocalInstance::FlagAddresses> Flags = Game::GameInstance->scanPlayerFlags();
+					for (auto& kv : Flags)
+					{
+						if (Instances::PlayerList.count(kv.first) && Instances::PlayerList[kv.first])
+						{
+							Instances::PlayerList[kv.first]->UpdateFlags(kv.second);
+						}
+					}
+					Logging::LoggerService::LogInformation("Re-scanned player flags after Link re-creation.", __FUNCTION__);
+				}
+				catch (...) {}
+			}
+		}
 	}
 
 	if (name.rfind("Jugador", 0) == 0)
@@ -760,6 +784,11 @@ void timemgr_OnInit(PPCInterpreter_t* hCPU)
 	Game::GameInstance->World->WritableTime = new BigEndian<float>(hCPU->gpr[3] + 0xA0 + Main::baseAddr, __FUNCTION__);
 }
 
+void dummySelfTestFn(PPCInterpreter_t* hCPU)
+{
+	if (hCPU) hCPU->instructionPointer = hCPU->sprNew.LR;
+}
+
 void init() {
 	static bool s_initialized = false;
 	if (s_initialized) return;
@@ -778,6 +807,20 @@ void init() {
 		Logging::LoggerService::LogError("init(): GetProcAddress osLib_registerHLEFunction failed!");
 		return;
 	}
+
+	// Self-test: register dummy function to verify index lookup offset (+0x10) per Claude Spec §2.3 #5
+	osLib_registerHLEFunction("selftest", "dummy", static_cast<void (*) (PPCInterpreter_t*)>(&dummySelfTestFn));
+	osLib_getHLEFunctionAddressType osLib_getHLEFunctionAddress = (osLib_getHLEFunctionAddressType)((char*)osLib_registerHLEFunction + 0x10);
+	uint32_t dummyIdx = osLib_getHLEFunctionAddress("selftest", "dummy");
+	if (dummyIdx == 0 || dummyIdx > 0xFFFF)
+	{
+		std::stringstream ss;
+		ss << "init(): Self-test FAILED! Lookup returned invalid index 0x" << std::hex << dummyIdx
+		   << ". Offset +0x10 is invalid for this Cemu build!";
+		Logging::LoggerService::LogError(ss.str());
+		return;
+	}
+	Logging::LoggerService::LogInformation("init(): Self-test PASSED (dummyIdx=0x" + std::to_string(dummyIdx) + "). HLE offset verified.");
 
 	osLib_registerHLEFunction("spawnactors", "fnCallMain", static_cast<void (*) (PPCInterpreter_t*)>(&mainFn));
 	osLib_registerHLEFunction("multiplayer", "WeatherSync", static_cast<void (*) (PPCInterpreter_t*)>(&WeatherFn));

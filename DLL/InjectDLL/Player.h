@@ -75,6 +75,20 @@ namespace MemoryAccess
 			AttackAddr = actorFlags.AttackAnimation;
 		}
 
+		void UpdateFlags(MemoryAccess::LocalInstance::FlagAddresses actorFlags)
+		{
+			Mutex.lock();
+			if (Exists) Exists->setAddress(actorFlags.ExistsFlag, __FUNCTION__);
+			if (DispName) DispName->setAddress(actorFlags.DispNameFlag, __FUNCTION__);
+			if (Status) Status->setAddress(actorFlags.StatusFlag, __FUNCTION__);
+			NameAddr = actorFlags.NameFlag;
+			AnimAddr = actorFlags.AnimationFlag;
+			HoldAddr = actorFlags.HoldFlag;
+			if (MapPin) MapPin->setAddress(actorFlags.MapPin, __FUNCTION__);
+			AttackAddr = actorFlags.AttackAnimation;
+			Mutex.unlock();
+		}
+
 		void setAddress(uint64_t addr)
 		{
 			Mutex.lock();

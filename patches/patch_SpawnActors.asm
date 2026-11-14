@@ -4184,24 +4184,7 @@ lis r11, HLELoc@ha
 lwz r11, HLELoc@l(r11)
 cmpwi r11, 0x0
 bne CallDllFunc
-
-lis r3, ModuleName@ha
-addi r3, r3, ModuleName@l
-lis r4, ModuleHandle@ha
-addi r4, r4, ModuleHandle@l
-bla import.coreinit.OSDynLoad_Acquire
-
-cmpwi r3, 0x0 ; Anything other than 0x0 is an error code.. 
-bne restoreAndExit ; in this case it means that the module isn't registered (yet).
-
-lis r3, ModuleHandle@ha
-lwz r3, ModuleHandle@l(r3)
-li r4, 0x0
-lis r5, HLEName@ha
-addi r5, r5, HLEName@l
-lis r6, HLELoc@ha
-addi r6, r6, HLELoc@l
-bla import.coreinit.OSDynLoad_FindExport
+b restoreAndExit
 
 CallDllFunc:
 lis r11, HLELoc@ha

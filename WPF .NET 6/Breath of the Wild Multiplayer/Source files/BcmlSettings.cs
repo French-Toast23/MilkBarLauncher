@@ -420,6 +420,29 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
                         catch { }
                     }
                 }
+
+                // Ensure updated ResourceSizeTable.product.srsizetable is present in graphic pack
+                string rstbPath = Path.Combine(merged, "System", "Resource", "ResourceSizeTable.product.srsizetable");
+                string backupRstb = Path.Combine(AppContext.BaseDirectory, "patches", "ResourceSizeTable.product.srsizetable");
+                if (!File.Exists(backupRstb)) backupRstb = Path.Combine(Directory.GetCurrentDirectory(), "patches", "ResourceSizeTable.product.srsizetable");
+                if (!File.Exists(backupRstb)) backupRstb = Path.Combine(AppContext.BaseDirectory, "..", "patches", "ResourceSizeTable.product.srsizetable");
+                if (!File.Exists(backupRstb)) backupRstb = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "patches", "ResourceSizeTable.product.srsizetable");
+                if (File.Exists(backupRstb))
+                {
+                    bool rstbNeedsCopy = !File.Exists(rstbPath) ||
+                                         new FileInfo(rstbPath).Length != new FileInfo(backupRstb).Length ||
+                                         File.GetLastWriteTimeUtc(backupRstb) > File.GetLastWriteTimeUtc(rstbPath);
+                    if (rstbNeedsCopy)
+                    {
+                        try
+                        {
+                            Directory.CreateDirectory(Path.GetDirectoryName(rstbPath)!);
+                            File.Copy(backupRstb, rstbPath, true);
+                        }
+                        catch { }
+                    }
+                }
+
                 string packDir = Path.Combine(merged, "Pack");
                 if (!Directory.Exists(packDir))
                     return;

@@ -59,24 +59,7 @@ lis r11, MP_Weather_HLELoc@ha
 lwz r11, MP_Weather_HLELoc@l(r11)
 cmpwi r11, 0x0
 bne MP_Weather_CallDllFunc
-
-lis r3, MP_Weather_ModuleName@ha
-addi r3, r3, MP_Weather_ModuleName@l
-lis r4, MP_Weather_ModuleHandle@ha
-addi r4, r4, MP_Weather_ModuleHandle@l
-bla import.coreinit.OSDynLoad_Acquire
-
-cmpwi r3, 0x0 ; Anything other than 0x0 is an error code.. 
-bne MP_Weather_RestoreAndExit ; in this case it means that the module isn't registered (yet).
-
-lis r3, MP_Weather_ModuleHandle@ha
-lwz r3, MP_Weather_ModuleHandle@l(r3)
-li r4, 0x0
-lis r5, MP_Weather_HLEName@ha
-addi r5, r5, MP_Weather_HLEName@l
-lis r6, MP_Weather_HLELoc@ha
-addi r6, r6, MP_Weather_HLELoc@l
-bla import.coreinit.OSDynLoad_FindExport
+b MP_Weather_RestoreAndExit
 
 MP_Weather_CallDllFunc:
 lis r11, MP_Weather_HLELoc@ha

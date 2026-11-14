@@ -117,9 +117,14 @@
     `notPaused` has CRC32 `HashValue: -1818500423` (unsigned `0x939BE2B9`). Likewise, `Jugador10_DispNameFlag` = `0x82CBCC60`, `Jugador10_Status` = `0x8768FA81`, `Jugador10_Name` = `0xF2A5D4A2`.
   - These are **GameData flags** stored inside `GameData/gamedata.ssarc` within `content/Pack/Bootup.pack`.
   - If `Bootup.pack` does not define these flags, BotW's `GameDataMgr` never allocates them in heap memory (`0x10298410`), causing `PatternScan` to fail after 15 retries.
-  - **CRITICAL CAVEAT (`savedataformat.ssarc` vs `gamedata.ssarc`)**:
+  - **CRITICAL CAVEAT 1 (`savedataformat.ssarc` vs `gamedata.ssarc`)**:
     - Do **NOT** modify or re-sort `GameData/savedataformat.ssarc`. Existing user save files (`game_data.sav`) index saved fields strictly by their exact offset and chunk in `saveformat_0..5.bgsvdata` (for instance, `PlayReport_PlayTime` at index 660 of `saveformat_5`). Shifting entries corrupts save parsing, causing a NULL pointer dereference (`lwz r3, 0x10(rA)` where `rA == 0`, guest IP `0x03208cec`).
     - Custom multiplayer flags MUST have `IsSave: False` in `gamedata.ssarc`. This instructs `GameDataMgr` to instantiate the flags in RAM without requiring them in `game_data.sav` on disk, eliminating save corruption and crashes while allowing `InjectDLL` to locate all flags cleanly.
+  - **CRITICAL CAVEAT 2 (`ResourceSizeTable.product.srsizetable` Heap Allocation Underflow)**:
+    - BotW uses the Resource Size Table (RSTB) to pre-allocate heap buffers for every resource before decompression/parsing.
+    - When `gamedata.ssarc` was injected into `Bootup.pack`, its uncompressed size increased to `6,537,124` bytes, requiring at least `6,537,412` bytes according to `SizeCalculator`.
+    - However, the stock/deployed RSTB entry for `GameData/gamedata.sarc` was only `6,536,932` bytes (480 bytes undersized!).
+    - When BotW decompressed `gamedata.ssarc`, the data overflowed the undersized heap allocation, corrupting subsequent heap structures and causing access violation `0xc0000005` at `IP 0x03208cec LR 0x034dd6f8`.
 * **Fix Applied**:
   - Merged all 89 `bool_data` flags into `bool_data_2.bgdata` (with `IsSave: False`).
   - Merged all 67 `s32_data` flags into `s32_data_0.bgdata` (with `IsSave: False`).
@@ -127,7 +132,32 @@
   - Kept `GameData/savedataformat.ssarc` 100% pristine vanilla from `mlc01`.
   - Injected BNP mod files (`ModelDivideTable.sbyml`, `AIDef_Game.product.sbyml`, `EventInfo.product.sbyml`, `Static.smubin`, etc.) into `Bootup.pack`.
   - Deployed `Bootup.pack` to `%APPDATA%\Cemu\graphicPacks\BreathOfTheWild_Multiplayer\content\Pack\Bootup.pack`, `patches/Bootup.pack`, and `Build/patches/Bootup.pack`.
-  - Updated `BcmlSettings.cs` to auto-synchronize `Bootup.pack`.
+  - Re-calculated all 38 undersized RSTB entries across the entire graphic pack using `rstb.SizeCalculator`.
+  - Raised `GameData/gamedata.sarc` in `ResourceSizeTable.product.srsizetable` to `6,541,508` bytes (+4KB safety padding).
+  - Raised `Actor/ActorInfo.product.byml` in `ResourceSizeTable.product.srsizetable` to `2,037,488` bytes (covering the 1,971,952 bytes merged file + 64KB padding).
+  - Repacked `ResourceSizeTable.product.srsizetable` as big-endian Yaz0 into `patches/` and `Build/patches/`.
+  - Added automatic RSTB and Bootup synchronization in `BcmlSettings.ValidateAndFixGraphicPack()` so `ResourceSizeTable.product.srsizetable` is verified and copied to `%APPDATA%\Cemu\graphicPacks\BreathOfTheWild_Multiplayer\content\System\Resource\` on startup.
+
+---
+
+### G. Elimination of Dead Slow Path in Dynamic Branch Assembly (Claude Spec §2.3 #6)
+* **Problem**: When a hook slot was unbound (`HLELoc == 0`), the assembly fast paths in `patch_UKL_Utils_DynamicBranch.asm`, `patch_SpawnActors.asm`, and `patch_Weather.asm` fell through to call `OSDynLoad_Acquire` and `OSDynLoad_FindExport` from arbitrary guest game threads. This triggered coreinit calls that consistently failed on Cemu 2.6 and introduced unnecessary stack frames.
+* **Fix**: Replaced the fallthrough with an immediate return/restore when slot is zero:
+  ```asm
+  lwz r11, 0x0(r5) ; HLELoc
+  cmpwi r11, 0x0
+  bne UKL_Utils_DynamicBranch_CallSlot
+  b UKL_Utils_DynamicBranch_Return_False
+  ```
+  Applied across all dynamic branch sites.
+
+---
+
+### H. HLE Registration Hardening & Actor Lifecycle Synchronization (Claude Spec §2.3 #5, §3.1, §4, §8.1)
+* **HLE Self-Test**: Added a startup self-test in `init()` that registers a dummy function and verifies the `+0x10` offset against `osLib_getHLEFunctionAddress`. If the offset does not return a valid index, binding aborts safely and logs an error rather than writing corrupt opcodes.
+* **Actor Lifecycle Logging**: Added detailed logging for actor queuing (`queueActor`), `createActor_` invocation arguments (`setupActor`), and actor creation events (`OnActorCreate`), enabling end-to-end auditability.
+* **Flag Re-scan on Link Re-creation**: Added `Player::UpdateFlags` and hooked `GameROMPlayer` creation in `OnActorCreate` so that when Link respawns (after death, fast travel, or loading another save), custom player flag addresses are re-scanned and synchronized dynamically.
+* **Cached Pointer Invalidation**: `OnActorErase` clears cached player actor and equipment addresses immediately on the game thread under mutex protection.
 
 ---
 

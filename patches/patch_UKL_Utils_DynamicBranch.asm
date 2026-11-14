@@ -22,32 +22,7 @@ lwz r3, 4(r1)
 lwz r11, 0x0(r5) ; (HLELoc)
 cmpwi r11, 0x0
 bne UKL_Utils_DynamicBranch_CallSlot
-
-; We're gonna need to do some register juggling
-addi r1, r1, -16
-stw r3, 0(r1) ; (HLEName)
-stw r4, 4(r1) ; (ModuleName)
-stw r5, 8(r1) ; (HLELoc)
-stw r6, 12(r1) ; (ModuleHandle)
-
-lwz r3, 4(r1) ; (ModuleName)
-lwz r4, 12(r1) ; (ModuleHandle)
-bla import.coreinit.OSDynLoad_Acquire
-
-cmpwi r3, 0x0 ; Anything other than 0x0 is an error code.. 
-bne UKL_Utils_DynamicBranch_AcquireFailed ; In this case the module isn't registered (yet).
-
-lwz r3, 12(r1) ; (ModuleHandle)
-lwz r3, 0(r3)
-li r4, 0x0
-lwz r5, 0(r1) ; (HLEName)
-lwz r6, 8(r1) ; (HLELoc)
-bla import.coreinit.OSDynLoad_FindExport
-
-lwz r11, 8(r1) ; (HLELoc)
-lwz r11, 0(r11)
-
-addi r1, r1, 16
+b UKL_Utils_DynamicBranch_Return_False
 
 ; Expects &HLELoc to be in r11
 UKL_Utils_DynamicBranch_CallDllFunc:
