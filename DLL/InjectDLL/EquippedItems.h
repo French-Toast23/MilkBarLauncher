@@ -2,6 +2,7 @@
 #include <Windows.h>
 #include "Memory.h"
 #include "CharacterEquipment.h"
+#include "LoggerService.h"
 
 namespace DataTypes
 {
@@ -16,48 +17,81 @@ namespace DataTypes
 
 			std::vector<int> signature = { 0x5F, 0x28, 0x32, 0x89, -1, -1, -1, -1, 0x5F, 0x28, 0x32, 0x89 };
 
-			uint64_t addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, Memory::ScanOffset) + 0x4;
-
-			while (addr < 30000)
+			uint64_t addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, 0);
+			if (addr < 30000)
 			{
-				Sleep(2000);
-				Logging::LoggerService::LogDebug("Failed to find porch.", __FUNCTION__);
-				addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, Memory::ScanOffset) + 0x4;
+				addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 0, 0, false, false);
 			}
 
-			porchAddress = addr;
+			int retries = 0;
+			while (addr < 30000 && retries < 2)
+			{
+				Sleep(200);
+				retries++;
+				addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, 0);
+			}
 
-			Memory::ScanOffset = porchAddress - Memory::RegionStart;
+			if (addr >= 30000)
+			{
+				porchAddress = addr + 0x4;
+				Logging::LoggerService::LogInformation("Porch address found at: 0x" + std::to_string(porchAddress), __FUNCTION__);
+			}
+			else
+			{
+				Logging::LoggerService::LogWarning("Porch address not found (non-fatal, defaulting).", __FUNCTION__);
+			}
 
 			signature = { 0x82, 0x48, 0x92, 0xBE, -1, -1, -1, -1, 0x82, 0x48, 0x92, 0xBE };
 
-			addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, Memory::ScanOffset) + 0x4;
-
-			while (addr < 30000)
+			addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, 0);
+			if (addr < 30000)
 			{
-				Sleep(2000);
-				Logging::LoggerService::LogDebug("Failed to find equipped items.", __FUNCTION__);
-				addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, Memory::ScanOffset) + 0x4;
+				addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 0, 0, false, false);
 			}
 
-			equippedAddress = addr;
+			retries = 0;
+			while (addr < 30000 && retries < 2)
+			{
+				Sleep(200);
+				retries++;
+				addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, 0);
+			}
 
-			Memory::ScanOffset = equippedAddress - Memory::RegionStart;
+			if (addr >= 30000)
+			{
+				equippedAddress = addr + 0x4;
+				Logging::LoggerService::LogInformation("Equipped items address found at: 0x" + std::to_string(equippedAddress), __FUNCTION__);
+			}
+			else
+			{
+				Logging::LoggerService::LogWarning("Equipped items address not found (non-fatal, defaulting).", __FUNCTION__);
+			}
 
-			setAddress(porchAddress, equippedAddress, __FUNCTION__);
+			if (porchAddress >= 30000 && equippedAddress >= 30000)
+			{
+				setAddress(porchAddress, equippedAddress, __FUNCTION__, false);
+			}
+			else
+			{
+				AddressSet = false;
+			}
 		}
 
-		void setAddress(uint64_t porchAddress, uint64_t equippedAddress, const char* caller, bool Validate = true)
+		void setAddress(uint64_t porchAddress, uint64_t equippedAddress, const char* caller, bool Validate = false)
 		{
+			if (porchAddress < 30000 || equippedAddress < 30000)
+			{
+				AddressSet = false;
+				return;
+			}
+
 			if (Validate)
 			{
 				AddressSet = ValidateAddress(porchAddress, caller);
-
 				if (!AddressSet)
 					return;
 
 				AddressSet = ValidateAddress(equippedAddress, caller);
-
 				if (!AddressSet)
 					return;
 			}
@@ -135,9 +169,8 @@ namespace DataTypes
 		{
 			std::vector<std::string> Equipment;
 
-			if (!AddressSet)
+			if (!AddressSet || PorchAddress < 30000 || EquippedAddress < 30000)
 			{
-				Logging::LoggerService::LogWarning("Tried to get value of not set address. Returning default.", caller);
 				return Equipment;
 			}
 
@@ -160,15 +193,15 @@ namespace DataTypes
 		}
 
 	private:
-		uint64_t PorchAddress;
-		uint64_t EquippedAddress;
+		uint64_t PorchAddress = 0;
+		uint64_t EquippedAddress = 0;
 		bool AddressSet = false;
 
 		bool ValidateAddress(uint64_t Address, const char* caller)
 		{
-			if (Address == 0)
+			if (Address < 30000)
 			{
-				Logging::LoggerService::LogWarning("Address set to 0.", caller);
+				Logging::LoggerService::LogWarning("Address below valid threshold.", caller);
 				return false;
 			}
 
@@ -178,9 +211,8 @@ namespace DataTypes
 			if (VirtualQuery((LPCVOID)Address, &mbi, sizeof(mbi)))
 			{
 				if (mbi.Protect & protectflags || !(mbi.State & MEM_COMMIT)) {
-					Logging::LoggerService::LogError("Failed to validate address.", caller);
-
-					exit(1);
+					Logging::LoggerService::LogWarning("Failed to validate address: memory not accessible.", caller);
+					return false;
 				}
 			}
 

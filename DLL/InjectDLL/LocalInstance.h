@@ -264,7 +264,7 @@ namespace MemoryAccess
 
 			propHuntFlags.Countdown = new LittleEndian<bool>({ 0x30, 0xA9, 0xAC, 0x57, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_Countdown", 0, 0);
 
-			uint64_t newOffset = (propHuntFlags.Countdown && propHuntFlags.Countdown->isAddressSet() && propHuntFlags.Countdown->address > Memory::RegionStart) ? (propHuntFlags.Countdown->address - Memory::RegionStart) : 0;
+			uint64_t newOffset = (propHuntFlags.Countdown && propHuntFlags.Countdown->isAddressSet() && Memory::RegionStart != 0 && propHuntFlags.Countdown->address > Memory::RegionStart) ? (propHuntFlags.Countdown->address - Memory::RegionStart) : 0;
 
 			propHuntFlags.HidePlayer = new LittleEndian<bool>({ 0x05, 0x22, 0xFA, 0x47, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_HideTimer", newOffset, 0);
 			propHuntFlags.HidingPhase = new LittleEndian<bool>({ 0xA8, 0xA5, 0x8F, 0x41, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_HidingPhase", newOffset, 0);

@@ -64,13 +64,17 @@ namespace DataTypes
 		}
 
 		uint64_t addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, scanOffset) + finalOffset;
+		if (addr - finalOffset < 30000 && scanOffset != 0)
+		{
+			addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, 0) + finalOffset;
+		}
 
 		int retries = 0;
 		while (addr - finalOffset < 30000 && retries < maxRetries)
 		{
 			Sleep(200);
 			retries++;
-			addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, scanOffset) + finalOffset;
+			addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, 0) + finalOffset;
 		}
 
 		if (addr - finalOffset < 30000)
@@ -81,7 +85,7 @@ namespace DataTypes
 		}
 
 		if (saveOffset)
-			Memory::ScanOffset = addr - Memory::RegionStart;
+			Memory::ScanOffset = (Memory::RegionStart != 0 && addr > Memory::RegionStart) ? (addr - Memory::RegionStart) : 0;
 
 		setAddress(addr, caller);
 	}
