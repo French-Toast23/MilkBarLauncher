@@ -93,6 +93,14 @@ namespace DataTypes
 	template <typename T>
 	void BigEndian<T>::setAddress(uint64_t Address, const char* caller, bool Validate)
 	{
+		if (Address < 30000)
+		{
+			AddressSet = false;
+			this->Pointer = nullptr;
+			this->address = 0;
+			return;
+		}
+
 		if (Validate)
 			AddressSet = ValidateAddress(Address, caller);
 		else
@@ -110,29 +118,43 @@ namespace DataTypes
 	{
 		LastKnown = val;
 
-		if (!AddressSet)
+		if (!AddressSet || !Pointer || (uint64_t)Pointer < 30000)
 		{
 			return;
 		}
 
 		SwapEndianness(val);
-		memcpy(Pointer, &val, sizeof(T));
+		__try
+		{
+			memcpy(Pointer, &val, sizeof(T));
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			AddressSet = false;
+		}
 	}
 
 	template <typename T>
 	T BigEndian<T>::get(const char* caller)
 	{
-		if (!AddressSet)
+		if (!AddressSet || !Pointer || (uint64_t)Pointer < 30000)
 		{
 			return (T)0;
 		}
 
-		T val;
+		T val = (T)0;
 
-		memcpy(&val, Pointer, sizeof(T));
-		SwapEndianness(val);
-
-		LastKnown = val;
+		__try
+		{
+			memcpy(&val, Pointer, sizeof(T));
+			SwapEndianness(val);
+			LastKnown = val;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			AddressSet = false;
+			return (T)0;
+		}
 
 		return val;
 	}
@@ -153,7 +175,7 @@ namespace DataTypes
 	template <typename T>
 	bool BigEndian<T>::ValidateAddress(uint64_t Address, const char* caller)
 	{
-		if (Address == 0)
+		if (Address < 30000)
 		{
 			return false;
 		}
@@ -164,9 +186,8 @@ namespace DataTypes
 		if (VirtualQuery((LPCVOID)Address, &mbi, sizeof(mbi)))
 		{
 			if (mbi.Protect & protectflags || !(mbi.State & MEM_COMMIT)) {
-				Logging::LoggerService::LogError("Failed to validate address. Address: " + std::to_string(Address), caller);
-
-				exit(1);
+				Logging::LoggerService::LogWarning("Address not committed/accessible: 0x" + std::to_string(Address), caller);
+				return false;
 			}
 		}
 

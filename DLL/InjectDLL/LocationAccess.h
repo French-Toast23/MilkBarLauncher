@@ -99,6 +99,8 @@ namespace DataTypes
 			return result;
 		}
 
+		bool isAddressSet() const { return AddressSet; }
+
 	private:
 		uint64_t Address = 0;
 		bool AddressSet = false;

@@ -24,6 +24,8 @@ namespace DataTypes
 		float get_y(const char* caller);
 		float get_z(const char* caller);
 
+		bool isAddressSet() const { return _x && _x->isAddressSet(); }
+
 	private:
 		BigEndian<float>* _x;
 		BigEndian<float>* _y;

@@ -1752,8 +1752,12 @@ void Main::mainServerLoop()
 
                 for (int i = 1; i < 33; i++)
                 {
-                    Instances::PlayerList[i]->HideFromMap = false;
-                    Instances::PlayerList[i]->DispName->set(true, __FUNCTION__);
+                    if (Instances::PlayerList.count(i) && Instances::PlayerList[i])
+                    {
+                        Instances::PlayerList[i]->HideFromMap = false;
+                        if (Instances::PlayerList[i]->DispName && Instances::PlayerList[i]->DispName->isAddressSet())
+                            Instances::PlayerList[i]->DispName->set(true, __FUNCTION__);
+                    }
                 }
 
                 SendTimerMessage(false, "", 0, 0);
@@ -1786,8 +1790,12 @@ void Main::mainServerLoop()
 
                 for (int i = 1; i < 33; i++)
                 {
-                    Instances::PlayerList[i]->HideFromMap = true;
-                    Instances::PlayerList[i]->DispName->set(false, __FUNCTION__);
+                    if (Instances::PlayerList.count(i) && Instances::PlayerList[i])
+                    {
+                        Instances::PlayerList[i]->HideFromMap = true;
+                        if (Instances::PlayerList[i]->DispName && Instances::PlayerList[i]->DispName->isAddressSet())
+                            Instances::PlayerList[i]->DispName->set(false, __FUNCTION__);
+                    }
                 }
             }
 
@@ -1925,6 +1933,22 @@ void Main::Setup()
             Sleep(100);
     }
     Logging::LoggerService::LogInformation("Base memory address acquired: " + std::to_string(Main::baseAddr));
+
+    uint64_t reg8 = Memory::findRegionBaseAddress(Main::baseAddr, 8);
+    if (reg8 < 30000)
+    {
+        MEMORY_BASIC_INFORMATION mbi{ 0 };
+        reg8 = Main::baseAddr;
+        for (int i = 0; i < 7; i++)
+        {
+            if (VirtualQuery((LPCVOID)reg8, &mbi, sizeof(mbi)) && mbi.RegionSize > 0)
+            {
+                reg8 += mbi.RegionSize;
+            }
+        }
+    }
+    Memory::RegionStart = reg8;
+    Logging::LoggerService::LogInformation("Region 8 start address acquired: 0x" + std::to_string(Memory::RegionStart));
 
     // Ensure HLE functions are registered with Cemu now that base memory and RPLs are loaded
     init();

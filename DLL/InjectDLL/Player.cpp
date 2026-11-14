@@ -73,13 +73,15 @@ void Player::PThread()
 			{
 				Logging::LoggerService::LogDebug("Selected action: Delete", __FUNCTION__);
 				//this->Delete->set(true, __FUNCTION__);
-				this->Status->set(1, __FUNCTION__);
+				if (this->Status && this->Status->isAddressSet())
+					this->Status->set(1, __FUNCTION__);
 
 				while (this->baseAddr != 0)
 					Sleep(50);
 
 				//this->Delete->set(false, __FUNCTION__);
-				this->Status->set(0, __FUNCTION__);
+				if (this->Status && this->Status->isAddressSet())
+					this->Status->set(0, __FUNCTION__);
 
 				continue;
 			}
@@ -101,7 +103,7 @@ void Player::PThread()
 					continue;
 				}
 
-				if (this->baseAddr != 0)
+				if (this->baseAddr != 0 && this->Status && this->Status->isAddressSet())
 					this->Status->set(1, __FUNCTION__);
 					//this->Delete->set(true, __FUNCTION__);
 
@@ -120,7 +122,8 @@ void Player::PThread()
 						stream << "Could not delete player " << this->PlayerNumber << ". Old actor could still be visible in the world.";
 						Logging::LoggerService::LogWarning(stream.str(), __FUNCTION__);
 						failedToDelete = true;
-						this->Status->set(0, __FUNCTION__);
+						if (this->Status && this->Status->isAddressSet())
+							this->Status->set(0, __FUNCTION__);
 						LastSpawn = GetTickCount();
 						continue;
 					}
@@ -129,7 +132,8 @@ void Player::PThread()
 				}
 
 				//this->Delete->set(false, __FUNCTION__);
-				this->Status->set(0, __FUNCTION__);
+				if (this->Status && this->Status->isAddressSet())
+					this->Status->set(0, __FUNCTION__);
 
 				if (GameInstance->IsPaused())
 				{
@@ -164,7 +168,8 @@ void Player::PThread()
 				}
 
 				GameInstance->RequestCreate(this->PlayerNumber, this->LastServerPosition);
-				this->Exists->set(false, __FUNCTION__);
+				if (this->Exists && this->Exists->isAddressSet())
+					this->Exists->set(false, __FUNCTION__);
 
 				LastSpawn = GetTickCount();
 

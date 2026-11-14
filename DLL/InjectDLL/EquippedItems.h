@@ -192,6 +192,8 @@ namespace DataTypes
 			return Equipment;
 		}
 
+		bool isAddressSet() const { return AddressSet; }
+
 	private:
 		uint64_t PorchAddress = 0;
 		uint64_t EquippedAddress = 0;

@@ -232,6 +232,22 @@ Copy-Item "Build\Resources\InjectDLL.dll" "WPF .NET 6\Breath of the Wild Multipl
   3. Added scan offset 0 fallback in `BigEndian.h` and `LittleEndian.h` if a non-zero `scanOffset` fails to find an address.
   4. Recompiled `InjectDLL.dll` and updated all launcher resources.
 
+### L. Implementation of Claude Review Recommendations (Stability, CRC32 Validation & Safety)
+* **Context**: Claude reviewed the mod address handling and identified 6 critical issues:
+  1. **Anchor Underflow in `scanPlayerFlags()`**: Subtracting offsets (1, 4, 0x20) from an unvalidated `rawAddr` (which is 0 when not found) underflowed `uint64_t` to `0xFFFFFFFFFFFFFFFF`, causing access violations.
+  2. **Derived Address Overwrite Risk**: Fixed strides (`0x10`, `0x20`, `0xC0`) without per-slot verification could corrupt vanilla flags if layout deviates.
+  3. **Uninitialized `Memory::RegionStart`**: Since `LocationAccess` was non-fatalized and stopped calculating Region 8, `Memory::RegionStart` remained 0.
+  4. **Silent Scan Failures**: Lack of visibility into which memory scans succeeded or degraded.
+  5. **Startup Scan Redundancy**: Avoid unnecessary multi-region scans.
+  6. **RSTB Margin**: `GameData/gamedata.sarc` size in RSTB was close to boundary; generous headroom is required.
+* **Fixes Implemented**:
+  1. **Anchor Guards & Underflow Protection**: In `LocalInstance.h`, `rawAddr >= 30000` is strictly enforced before performing any address arithmetic. If an anchor is not found, derived flag pointers default to 0 and players are skipped rather than writing to garbage memory.
+  2. **CRC32 Per-Slot Hash Verification**: For every derived slot (`DispName`, `Exists`, `Status`, `Name`), the 4-byte big-endian hash is read and compared against the IEEE 802.3 CRC32 hash of the expected flag name (e.g. `Jugador{n}_DispNameFlag`, `Jugador{n}_Exists`, `Jugador{n}_Status`, `Jugador{n}_Name`). If the hash doesn't match, the slot is zeroed and never written to, guaranteeing 100% protection for vanilla flags.
+  3. **Explicit `Memory::RegionStart`**: Calculated explicitly in `Main::Setup()` upon acquiring `Main::baseAddr` using `Memory::findRegionBaseAddress(Main::baseAddr, 8)` with a fallback 7-region query loop. `findRegionBaseAddress()` in `Scanner.cpp` was also hardened against infinite loops.
+  4. **SEH Safe Memory Operations & Elimination of `exit(1)`**: Replaced raw `memcpy` with SEH `__try / __except` inside `LittleEndian<T>::set/get` and `BigEndian<T>::set/get`. Removed `exit(1)` from `ValidateAddress()`.
+  5. **Summary & Diagnostic Logging**: Added structured `[SCAN SUMMARY]` log lines for both core instance structures and all 32 player flag sets. Added `DiagnoseFlagHash` to scan for isolated 4-byte hashes and log ±16 bytes of context if an anchor fails.
+  6. **RSTB Expansion**: Increased `GameData/gamedata.sarc` size in `ResourceSizeTable.product.srsizetable` (patches, Build, and active Cemu graphic pack) to `6,700,000` bytes (+160KB headroom).
+
 ---
 
 ### WPF .NET 8 Launcher (`Breath of the Wild Multiplayer.exe`)

@@ -304,12 +304,13 @@ uint64_t Memory::findRegionBaseAddress(uint64_t baseAddr, int region)
     uint64_t i = startAddress;
 
     int contador = 1;
-    while(true){
+    while (i < endAddress) {
         if (VirtualQuery((LPCVOID)i, &mbi, sizeof(mbi))) {
+            if (mbi.RegionSize == 0) break;
             if (mbi.Protect & protectflags || !(mbi.State & MEM_COMMIT)) {
                 i += mbi.RegionSize;
                 contador++;
-                continue; // if bad adress then dont read from it
+                continue; // if bad address then dont read from it
             }
 
             if (region != 0 && contador != region)
@@ -321,11 +322,15 @@ uint64_t Memory::findRegionBaseAddress(uint64_t baseAddr, int region)
 
             if (contador == region)
             {
-                break;
+                return i;
             }
+        }
+        else
+        {
+            break;
         }
     }
 
-    return i;
+    return 0;
 
 }

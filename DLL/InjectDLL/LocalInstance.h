@@ -272,7 +272,91 @@ namespace MemoryAccess
 			propHuntFlags.ShowPlayer = new LittleEndian<bool>({ 0x60, 0x3C, 0x05, 0xAA, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_ShowPhase", newOffset, 0);
 			propHuntFlags.StopMusic = new LittleEndian<bool>({ 0xBC, 0x92, 0x90, 0x4B, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_StopMusic", newOffset, 0);
 
+			std::stringstream scanSummary;
+			scanSummary << "[SCAN SUMMARY] LocalInstance: Location=" << (Location && Location->isAddressSet() ? "OK" : "DEFAULT")
+				<< ", Equipment=" << (Equipment && Equipment->isAddressSet() ? "OK" : "DEFAULT")
+				<< ", Day=" << (World && World->Day && World->Day->isAddressSet() ? "OK" : "DEFAULT")
+				<< ", NotPaused=" << (NotPaused && NotPaused->isAddressSet() ? "OK" : "DISABLED")
+				<< ", PH_Countdown=" << (propHuntFlags.Countdown && propHuntFlags.Countdown->isAddressSet() ? "OK" : "DISABLED");
+			Logging::LoggerService::LogInformation(scanSummary.str(), __FUNCTION__);
 			Logging::LoggerService::LogInformation("Scanned game instance successfully.", __FUNCTION__);
+		}
+
+		static inline uint32_t CalculateCRC32(const std::string& str)
+		{
+			uint32_t crc = 0xFFFFFFFF;
+			for (char c : str)
+			{
+				crc ^= (uint8_t)c;
+				for (int k = 0; k < 8; k++)
+					crc = (crc >> 1) ^ (0xEDB88320 & (-(int)(crc & 1)));
+			}
+			return ~crc;
+		}
+
+		static inline bool SafeReadU32BE(uint64_t addr, uint32_t& outVal)
+		{
+			if (addr < 30000) return false;
+			__try
+			{
+				uint32_t raw = *(const uint32_t*)addr;
+				outVal = _byteswap_ulong(raw);
+				return true;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return false;
+			}
+		}
+
+		static inline bool SafeReadByte(uint64_t addr, BYTE& outByte)
+		{
+			if (addr < 30000) return false;
+			__try
+			{
+				outByte = *(const BYTE*)addr;
+				return true;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return false;
+			}
+		}
+
+		static inline void DiagnoseFlagHash(uint32_t hash, const std::string& flagName)
+		{
+			std::vector<int> hashSig = {
+				(int)((hash >> 24) & 0xFF),
+				(int)((hash >> 16) & 0xFF),
+				(int)((hash >> 8) & 0xFF),
+				(int)(hash & 0xFF)
+			};
+			uint64_t found = Memory::PatternScan(hashSig, Memory::getBaseAddress(), 0, 0, false, false);
+			if (found >= 30000)
+			{
+				std::stringstream ss;
+				ss << "[DIAGNOSTIC] Hash for '" << flagName << "' (0x" << std::hex << hash << ") FOUND at 0x" << found << ". Context [-16..+16]: ";
+				uint64_t startCtx = (found >= 16) ? (found - 16) : found;
+				for (uint64_t p = startCtx; p < found + 16; p++)
+				{
+					BYTE b = 0;
+					if (SafeReadByte(p, b))
+					{
+						ss << std::hex << std::setw(2) << std::setfill('0') << (int)b << " ";
+					}
+					else
+					{
+						ss << "?? ";
+					}
+				}
+				Logging::LoggerService::LogWarning(ss.str(), __FUNCTION__);
+			}
+			else
+			{
+				std::stringstream ss;
+				ss << "[DIAGNOSTIC] Hash for '" << flagName << "' (0x" << std::hex << hash << ") NOT found in ANY memory region. Flag was never instantiated by GameDataMgr.";
+				Logging::LoggerService::LogWarning(ss.str(), __FUNCTION__);
+			}
 		}
 
 		std::map<int, FlagAddresses> scanPlayerFlags()
@@ -299,18 +383,42 @@ namespace MemoryAccess
 			if (rawAddr >= 30000)
 			{
 				uint64_t addr = rawAddr - 0x1;
-				for (int i = 0; i < FlagOrder1.size(); i++)
+				int verifiedDisp = 0, verifiedExists = 0;
+				for (size_t i = 0; i < FlagOrder1.size(); i++)
 				{
-					result[FlagOrder1[i]].DispNameFlag = addr;
+					int pNum = FlagOrder1[i];
+					uint32_t expDispHash = CalculateCRC32("Jugador" + std::to_string(pNum) + "_DispNameFlag");
+					uint32_t actualDispHash = 0;
+					if (SafeReadU32BE(addr + 1, actualDispHash) && actualDispHash == expDispHash)
+					{
+						result[pNum].DispNameFlag = addr;
+						verifiedDisp++;
+					}
+					else
+					{
+						result[pNum].DispNameFlag = 0;
+					}
 					addr += BOOL_OFFSET;
-					result[FlagOrder1[i]].ExistsFlag = addr;
+
+					uint32_t expExistsHash = CalculateCRC32("Jugador" + std::to_string(pNum) + "_Exists");
+					uint32_t actualExistsHash = 0;
+					if (SafeReadU32BE(addr + 1, actualExistsHash) && actualExistsHash == expExistsHash)
+					{
+						result[pNum].ExistsFlag = addr;
+						verifiedExists++;
+					}
+					else
+					{
+						result[pNum].ExistsFlag = 0;
+					}
 					addr += BOOL_OFFSET;
 				}
-				Logging::LoggerService::LogInformation("DispName & Exists flags mapped successfully.", __FUNCTION__);
+				Logging::LoggerService::LogInformation("DispName (" + std::to_string(verifiedDisp) + "/32) & Exists (" + std::to_string(verifiedExists) + "/32) flags validated via CRC32.", __FUNCTION__);
 			}
 			else
 			{
-				Logging::LoggerService::LogWarning("DispName & Exists flags not found in region 8; defaulting to 0.", __FUNCTION__);
+				Logging::LoggerService::LogWarning("DispName & Exists anchor not found in region 8; running diagnostic...", __FUNCTION__);
+				DiagnoseFlagHash(0x82cbcc60, "Jugador10_DispNameFlag");
 			}
 
 			sig = { 0x87, 0x68, 0xFA, 0x81, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0xC8 }; // Jugador10_Status
@@ -318,16 +426,29 @@ namespace MemoryAccess
 			if (rawAddr >= 30000)
 			{
 				uint64_t addr = rawAddr - 0x4;
-				for (int i = 0; i < FlagOrder1.size(); i++)
+				int verifiedStatus = 0;
+				for (size_t i = 0; i < FlagOrder1.size(); i++)
 				{
-					result[FlagOrder1[i]].StatusFlag = addr;
+					int pNum = FlagOrder1[i];
+					uint32_t expStatusHash = CalculateCRC32("Jugador" + std::to_string(pNum) + "_Status");
+					uint32_t actualStatusHash = 0;
+					if (SafeReadU32BE(addr + 4, actualStatusHash) && actualStatusHash == expStatusHash)
+					{
+						result[pNum].StatusFlag = addr;
+						verifiedStatus++;
+					}
+					else
+					{
+						result[pNum].StatusFlag = 0;
+					}
 					addr += INT_OFFSET;
 				}
-				Logging::LoggerService::LogInformation("Status flags mapped successfully.", __FUNCTION__);
+				Logging::LoggerService::LogInformation("Status flags validated via CRC32 (" + std::to_string(verifiedStatus) + "/32).", __FUNCTION__);
 			}
 			else
 			{
-				Logging::LoggerService::LogWarning("Status flags not found in region 8; defaulting to 0.", __FUNCTION__);
+				Logging::LoggerService::LogWarning("Status anchor not found in region 8; running diagnostic...", __FUNCTION__);
+				DiagnoseFlagHash(0x8768fa81, "Jugador10_Status");
 			}
 
 			sig = { 0xF2, 0xA5, 0xD4, 0xA2, -1, -1, -1, -1, 0x10, 0x29, 0x86, 0x38 }; // Jugador10_Name
@@ -335,16 +456,29 @@ namespace MemoryAccess
 			if (rawAddr >= 30000)
 			{
 				uint64_t addr = rawAddr - 0x20;
-				for (int i = 0; i < FlagOrder1.size(); i++)
+				int verifiedName = 0;
+				for (size_t i = 0; i < FlagOrder1.size(); i++)
 				{
-					result[FlagOrder1[i]].NameFlag = addr;
+					int pNum = FlagOrder1[i];
+					uint32_t expNameHash = CalculateCRC32("Jugador" + std::to_string(pNum) + "_Name");
+					uint32_t actualNameHash = 0;
+					if (SafeReadU32BE(addr + 0x20, actualNameHash) && actualNameHash == expNameHash)
+					{
+						result[pNum].NameFlag = addr;
+						verifiedName++;
+					}
+					else
+					{
+						result[pNum].NameFlag = 0;
+					}
 					addr += STR32_OFFSET;
 				}
-				Logging::LoggerService::LogInformation("Name flags mapped successfully.", __FUNCTION__);
+				Logging::LoggerService::LogInformation("Name flags validated via CRC32 (" + std::to_string(verifiedName) + "/32).", __FUNCTION__);
 			}
 			else
 			{
-				Logging::LoggerService::LogWarning("Name flags not found in region 8; defaulting to 0.", __FUNCTION__);
+				Logging::LoggerService::LogWarning("Name anchor not found in region 8; running diagnostic...", __FUNCTION__);
+				DiagnoseFlagHash(0xf2a5d4a2, "Jugador10_Name");
 			}
 
 			// Hold & Animation flags (Optional eventflow strings)
@@ -472,6 +606,22 @@ namespace MemoryAccess
 			{
 				Logging::LoggerService::LogWarning("MapPin address not found in region 8; defaulting to 0 (non-fatal).", __FUNCTION__);
 			}
+
+			int dispFound = 0, existsFound = 0, statusFound = 0, nameFound = 0, mapFound = 0, animFound = 0;
+			for (int i = 1; i <= 32; i++)
+			{
+				if (result[i].DispNameFlag >= 30000) dispFound++;
+				if (result[i].ExistsFlag >= 30000) existsFound++;
+				if (result[i].StatusFlag >= 30000) statusFound++;
+				if (result[i].NameFlag >= 30000) nameFound++;
+				if (result[i].MapPin >= 30000) mapFound++;
+				if (result[i].AnimationFlag >= 30000) animFound++;
+			}
+			std::stringstream sum;
+			sum << "[SCAN SUMMARY] Player Flags: DispName=" << dispFound << "/32, Exists=" << existsFound
+				<< "/32, Status=" << statusFound << "/32, Name=" << nameFound << "/32, MapPin=" << mapFound
+				<< "/32, Anim=" << animFound << "/32";
+			Logging::LoggerService::LogInformation(sum.str(), __FUNCTION__);
 
 			Logging::LoggerService::LogInformation("Scanned game flags successfully.", __FUNCTION__);
 			return result;

@@ -67,7 +67,8 @@ namespace MemoryAccess
 			Exists = new LittleEndian<bool>(actorFlags.ExistsFlag, __FUNCTION__);
 			DispName = new LittleEndian<bool>(actorFlags.DispNameFlag, __FUNCTION__);
 			Status = new BigEndian<int>(actorFlags.StatusFlag, __FUNCTION__);
-			Status->set(0, __FUNCTION__);
+			if (Status && Status->isAddressSet())
+				Status->set(0, __FUNCTION__);
 			NameAddr = actorFlags.NameFlag;
 			AnimAddr = actorFlags.AnimationFlag;
 			HoldAddr = actorFlags.HoldFlag;
@@ -167,23 +168,26 @@ namespace MemoryAccess
 			if (PlayerData->Animation == 835249056)
 				IsAttack = false;
 
-			if (this->Status->get(__FUNCTION__) != 1)
+			if (this->Status && this->Status->isAddressSet() && this->Status->get(__FUNCTION__) != 1)
 			{
 				if (IsAttack && (IsCharge || PlayerData->Animation != LastAnimation))
 				{
 					this->Status->set(2, __FUNCTION__);
-					Memory::write_string(AttackAddr, "Attack_" + std::to_string(UINT32(PlayerData->Animation)), DEFAULT_ATTACK.size(), __FUNCTION__);
+					if (AttackAddr >= 30000)
+						Memory::write_string(AttackAddr, "Attack_" + std::to_string(UINT32(PlayerData->Animation)), DEFAULT_ATTACK.size(), __FUNCTION__);
 				}
 				else
 				{
 					this->Status->set(0, __FUNCTION__);
-					Memory::write_string(AnimAddr, "Anim_" + std::to_string(UINT32(PlayerData->Animation)), DEFAULT_ANIM.size(), __FUNCTION__);
+					if (AnimAddr >= 30000)
+						Memory::write_string(AnimAddr, "Anim_" + std::to_string(UINT32(PlayerData->Animation)), DEFAULT_ANIM.size(), __FUNCTION__);
 				}
 			}
 			
 			LastAnimation = PlayerData->Animation;
 
-			Memory::write_string(HoldAddr, PlayerData->IsEquipped ? "Hold" : "Equip", 6, __FUNCTION__);
+			if (HoldAddr >= 30000)
+				Memory::write_string(HoldAddr, PlayerData->IsEquipped ? "Hold" : "Equip", 6, __FUNCTION__);
 			this->Equipment->Changed = Equipment->Compare(PlayerData->Equipment);
 			AtkUp = PlayerData->AtkUp;
 			Health = PlayerData->Health;
@@ -208,13 +212,15 @@ namespace MemoryAccess
 				return;
 
 			UpdateName(DispNames);
-			this->Status->set(1, __FUNCTION__);
+			if (this->Status && this->Status->isAddressSet())
+				this->Status->set(1, __FUNCTION__);
 
 		}
 
 		void setName(std::string newName)
 		{
-			Memory::write_string(NameAddr, newName, 32, __FUNCTION__);
+			if (NameAddr >= 30000)
+				Memory::write_string(NameAddr, newName, 32, __FUNCTION__);
 		}
 
 		void Teleport(Vec3f newPosition, bool Save = false)
@@ -281,7 +287,8 @@ namespace MemoryAccess
 		void Connect()
 		{
 			//this->Delete->set(false, __FUNCTION__);
-			this->Status->set(0, __FUNCTION__);
+			if (this->Status && this->Status->isAddressSet())
+				this->Status->set(0, __FUNCTION__);
 			connected = true;
 			if (PlayerNumber != 32)
 			{
@@ -304,7 +311,8 @@ namespace MemoryAccess
 			Mutex.lock();
 			this->baseAddr = 0;
 			//this->Delete->set(true, __FUNCTION__);
-			this->Status->set(1, __FUNCTION__);
+			if (this->Status && this->Status->isAddressSet())
+				this->Status->set(1, __FUNCTION__);
 			Mutex.unlock();
 			this->RunThread = false;
 			pThread.join();
@@ -320,8 +328,10 @@ namespace MemoryAccess
 			if(this->Health > 0)
 				ActualName += " HP: " + std::to_string(this->Health);
 
-			Memory::write_string(NameAddr, ActualName, 32, __FUNCTION__);
-			this->DispName->set(DispNames, __FUNCTION__);
+			if (NameAddr >= 30000)
+				Memory::write_string(NameAddr, ActualName, 32, __FUNCTION__);
+			if (this->DispName && this->DispName->isAddressSet())
+				this->DispName->set(DispNames, __FUNCTION__);
 		}
 
 	private:
@@ -386,10 +396,13 @@ namespace MemoryAccess
 
 		void UpdateMapPin(Vec3f newPosition, bool show)
 		{
-			if (show)
-				MapPin->set(newPosition, __FUNCTION__);
-			else
-				MapPin->set(Vec3f(12340.5, 2345.5, 0), __FUNCTION__);
+			if (MapPin && MapPin->isAddressSet())
+			{
+				if (show)
+					MapPin->set(newPosition, __FUNCTION__);
+				else
+					MapPin->set(Vec3f(12340.5, 2345.5, 0), __FUNCTION__);
+			}
 		}
 	};
 }
