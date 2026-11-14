@@ -146,6 +146,7 @@ void queueActor(int playerNumber, float Position[3])
 	queueActor.PosZ = Position[2];
 
 	queuedActors.push_back(queueActor);
+	Logging::LoggerService::LogInformation("Queued player actor '" + actorName + "' at (" + std::to_string(Position[0]) + ", " + std::to_string(Position[1]) + ", " + std::to_string(Position[2]) + "). Queue size: " + std::to_string(queuedActors.size()), __FUNCTION__);
 }
 
 void queueActor(std::string actorName, float Position[3])

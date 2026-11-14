@@ -14,7 +14,7 @@ namespace DataTypes
 		BigEndian();
 		BigEndian(uint64_t Address, const char* caller);
 		BigEndian(uint64_t baseAddr, std::vector<int> offsets, int finalOffset, const char* caller);
-		BigEndian(std::vector<int> signature, uint64_t finalOffset, const char* caller, uint64_t scanOffset = -1);
+		BigEndian(std::vector<int> signature, uint64_t finalOffset, const char* caller, uint64_t scanOffset = -1, int maxRetries = 0);
 
 		void setAddress(uint64_t Address, const char* caller, bool Validate = true);
 
@@ -54,7 +54,7 @@ namespace DataTypes
 	}
 
 	template <typename T>
-	BigEndian<T>::BigEndian(std::vector<int> signature, uint64_t finalOffset, const char* caller, uint64_t scanOffset)
+	BigEndian<T>::BigEndian(std::vector<int> signature, uint64_t finalOffset, const char* caller, uint64_t scanOffset, int maxRetries)
 	{
 		bool saveOffset = false;
 		if (scanOffset == (uint64_t)(-1))
@@ -64,30 +64,20 @@ namespace DataTypes
 		}
 
 		uint64_t addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, scanOffset) + finalOffset;
-		if (addr - finalOffset < 30000)
-		{
-			addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 0, 0, false, true) + finalOffset;
-		}
 
 		int retries = 0;
-		while (addr - finalOffset < 30000)
+		while (addr - finalOffset < 30000 && retries < maxRetries)
 		{
-			Logging::LoggerService::LogDebug("Failed to find address", __FUNCTION__);
-			Sleep(1000);
-
-			if (retries == 15)
-			{
-				Logging::LoggerService::LogWarning("Could not find location address after 15 retries. Flag disabled gracefully.", caller);
-				AddressSet = false;
-				return;
-			}
-
+			Sleep(200);
 			retries++;
 			addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 8, scanOffset) + finalOffset;
-			if (addr - finalOffset < 30000)
-			{
-				addr = Memory::PatternScan(signature, Memory::getBaseAddress(), 0, 0, false, true) + finalOffset;
-			}
+		}
+
+		if (addr - finalOffset < 30000)
+		{
+			Logging::LoggerService::LogDebug("Flag address not found in region 8 (optional/disabled).", caller);
+			AddressSet = false;
+			return;
 		}
 
 		if (saveOffset)

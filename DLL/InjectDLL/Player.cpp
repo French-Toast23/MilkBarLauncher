@@ -28,11 +28,13 @@ void Player::PThread()
 
 			bool shouldExist = false;
 
-			CharacterLocation LocalLocation = GameInstance->Location->LastKnown;
+			CharacterLocation LocalLocation = GameInstance->Location ? GameInstance->Location->LastKnown : CharacterLocation();
+			std::string localMap = (!LocalLocation.Map.empty() && LocalLocation.Map != "Empty") ? LocalLocation.Map : "MainField";
+			std::string remoteMap = (this->Location && !this->Location->Map.empty() && this->Location->Map != "Empty") ? this->Location->Map : "MainField";
 
 			std::string reasonToSpawn = "";
 
-			if (LocalLocation.Map == this->Location->Map && (LocalLocation.Map == "MainField" || LocalLocation.Section == this->Location->Section) && !this->isFar)
+			if (localMap == remoteMap && (localMap == "MainField" || (this->Location && LocalLocation.Section == this->Location->Section)) && !this->isFar)
 			{
 				shouldExist = true;
 			}

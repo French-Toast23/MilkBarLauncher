@@ -159,25 +159,34 @@ namespace MemoryAccess
 				return;
 			}
 
+			if (!queue_mutex)
+			{
+				Logging::LoggerService::LogWarning("Create request failed: queue_mutex is null.");
+				return;
+			}
+
 			queue_mutex->lock();
 
 			Logging::LoggerService::LogDebug("Requesting creation of player " + std::to_string(playerNumber) + "...", __FUNCTION__);
 
 			if (pos.x() == 0 && pos.y() == 0 && pos.z() == 0)
-				pos = Position->get(__FUNCTION__);
+			{
+				if (Position)
+					pos = Position->get(__FUNCTION__);
+			}
 
-			//float SpawnPos[3] = { pos.x(), pos.y(), pos.z() };
-
-			//queuePlayer(playerNumber, SpawnPos);
 			PlayerQueue.insert(PlayerQueue.begin(), {playerNumber, pos});
 
 			queue_mutex->unlock();
 
-			Logging::LoggerService::LogDebug("Requested creation of player " + std::to_string(playerNumber), __FUNCTION__);
+			Logging::LoggerService::LogInformation("Queued creation of player " + std::to_string(playerNumber) + " at (" + std::to_string(pos.x()) + ", " + std::to_string(pos.y()) + ", " + std::to_string(pos.z()) + ")", __FUNCTION__);
 		}
 
 		void ProcessCreationRequests()
 		{
+			if (!queue_mutex || !queuePlayer)
+				return;
+
 			queue_mutex->lock();
 
 			if (PlayerQueue.size() > 0 && !IsGamePaused)
@@ -203,15 +212,24 @@ namespace MemoryAccess
 				return false;
 			}
 
+			if (!queue_mutex || !queueActor)
+			{
+				Logging::LoggerService::LogWarning("Create request failed: queueActor is null.");
+				return false;
+			}
+
 			queue_mutex->lock();
 
 			if (pos.x() == 0 && pos.y() == 0 && pos.z() == 0)
-				pos = Position->get(__FUNCTION__);
+			{
+				if (Position)
+					pos = Position->get(__FUNCTION__);
+			}
 
 			float SpawnPos[3] = { pos.x(), pos.y(), pos.z() };
 
 			std::stringstream stream;
-			stream << "Requestion creation of " << actor << " at x: " << SpawnPos[0] << " y: " << SpawnPos[1] << " z: " << SpawnPos[2];
+			stream << "Requesting creation of " << actor << " at x: " << SpawnPos[0] << " y: " << SpawnPos[1] << " z: " << SpawnPos[2];
 
 			Logging::LoggerService::LogDebug(stream.str(), __FUNCTION__);
 
@@ -219,7 +237,7 @@ namespace MemoryAccess
 
 			queue_mutex->unlock();
 
-			Logging::LoggerService::LogDebug("Requested creation of actor " + actor, __FUNCTION__);
+			Logging::LoggerService::LogInformation("Requested creation of actor " + actor, __FUNCTION__);
 
 			return true;
 		}
@@ -232,32 +250,27 @@ namespace MemoryAccess
 		void scan()
 		{
 			Animation = new BigEndian<int>(this->baseAddr, { 0x448, 0x4C, 0x10, 0x19C, 0x38, 0xA0, 0x10, -0x5C }, 0x10, "Memory::LocalInstance::setAddress::Animation");
-			//Animation = new BigEndian<int>({ 0x8A, 0xB9, 0x46, 0x6F, -1, 0x00, 0x00 }, 0x08, "Memory::LocalInstance::scan::Animation", 0);
 
 			Logging::LoggerService::LogInformation("Scanning game instance...", __FUNCTION__);
 
 			Location = new LocationAccess();
 			Equipment = new EquippedItems();
-			World->Day = new BigEndian<int>({ 0x7B, 0x4B, 0xE8, 0x51, 0x00, 0x00, 0x00, 0x00, 0x10, 0x29, 0x84, 0xC8 }, -0x04, "Memory::LocalInstance::scan::World->Day");
-			//Health = new BigEndian<int>({ 0x6E, -1, -1, 0x38, 0x00, 0x00, 0x00, -1, 0x6E, -1, -1, -1, 0x6E, -1, -1, 0x58, -1, -1, -1, -1, 0x00, 0x00, 0x00, -1, 0x6E, -1, -1, -1, 0x6E, 0xD1 }, 0x04, __FUNCTION__);
-			AtkUp = new BigEndian<float>({ 0xBF, 0x80, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, -1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, -1, 0x80, 0x00, 0x00 }, 0x10C, "Memory::LocalInstance::scan::AtkUp");
-			//IsEquipped = new LittleEndian<bool>({ 0x6E, -1, -1, 0x68, 0x6E, -1, -1, 0xB4, 0x6E, -1, -1, 0x00, 0x6E }, 0x40, "Memory::LocalInstance::scan::IsEquipped");
+			World->Day = new BigEndian<int>({ 0x7B, 0x4B, 0xE8, 0x51, 0x00, 0x00, 0x00, 0x00, 0x10, 0x29, 0x84, 0xC8 }, -0x04, "Memory::LocalInstance::scan::World->Day", -1, 1);
+			AtkUp = new BigEndian<float>({ 0xBF, 0x80, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, -1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, -1, 0x80, 0x00, 0x00 }, 0x10C, "Memory::LocalInstance::scan::AtkUp", -1, 1);
 			IsEquipped = new LittleEndian<bool>(this->baseAddr, { 0x394, 0xAC, 0xA4 }, 0x0, "Memory::LocalInstance::scan::IsEquipped");
-			//Defense = new BigEndian<int>({ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, -1, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, -1, 0x3F, 0x80, 0x00, 0x00 }, 0x20, __FUNCTION__);
 			Defense = new BigEndian<int>(this->baseAddr, { 0x3b4, 0x0, 0x20, 0x4, 0x28, 0xd4, 0x158, 0x4, 0x4, 0x4, 0x4, 0x4, 0x4, 0xb0, 0x4, 0x4, 0xac, 0x28, 0x4 }, -0xE54, "Memory::LocalInstance::scan::Defense");
 			Health = new BigEndian<int>(Memory::getBaseAddress() + this->baseAddr + 0x540, "Memory::LocalInstance::scan::Health");
-			//World->Time = new BigEndian<float>({ 0x10, 0x29, 0x7D, 0x40, -1, 0x2E, 0xE3, 0x38 }, -0x04, __FUNCTION__);
-			NotPaused = new LittleEndian<bool>({ 0x93, 0x9B, 0xE2, 0xB9, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "Memory::LocalInstance::scan::NotPaused", 0);
+			NotPaused = new LittleEndian<bool>({ 0x93, 0x9B, 0xE2, 0xB9, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "Memory::LocalInstance::scan::NotPaused", 0, 0);
 
-			propHuntFlags.Countdown = new LittleEndian<bool>({ 0x30, 0xA9, 0xAC, 0x57, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_Countdown", 0);
+			propHuntFlags.Countdown = new LittleEndian<bool>({ 0x30, 0xA9, 0xAC, 0x57, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_Countdown", 0, 0);
 
-			uint64_t newOffset = (propHuntFlags.Countdown && propHuntFlags.Countdown->address > Memory::RegionStart) ? (propHuntFlags.Countdown->address - Memory::RegionStart) : 0;
+			uint64_t newOffset = (propHuntFlags.Countdown && propHuntFlags.Countdown->isAddressSet() && propHuntFlags.Countdown->address > Memory::RegionStart) ? (propHuntFlags.Countdown->address - Memory::RegionStart) : 0;
 
-			propHuntFlags.HidePlayer = new LittleEndian<bool>({ 0x05, 0x22, 0xFA, 0x47, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_HideTimer", newOffset);
-			propHuntFlags.HidingPhase = new LittleEndian<bool>({ 0xA8, 0xA5, 0x8F, 0x41, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_HidingPhase", newOffset);
-			propHuntFlags.RunningPhase = new LittleEndian<bool>({ 0xB6, 0x68, 0x05, 0x99, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_RunningPhase", newOffset);
-			propHuntFlags.ShowPlayer = new LittleEndian<bool>({ 0x60, 0x3C, 0x05, 0xAA, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_ShowPhase", newOffset);
-			propHuntFlags.StopMusic = new LittleEndian<bool>({ 0xBC, 0x92, 0x90, 0x4B, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_StopMusic", newOffset);
+			propHuntFlags.HidePlayer = new LittleEndian<bool>({ 0x05, 0x22, 0xFA, 0x47, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_HideTimer", newOffset, 0);
+			propHuntFlags.HidingPhase = new LittleEndian<bool>({ 0xA8, 0xA5, 0x8F, 0x41, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_HidingPhase", newOffset, 0);
+			propHuntFlags.RunningPhase = new LittleEndian<bool>({ 0xB6, 0x68, 0x05, 0x99, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_RunningPhase", newOffset, 0);
+			propHuntFlags.ShowPlayer = new LittleEndian<bool>({ 0x60, 0x3C, 0x05, 0xAA, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_ShowPhase", newOffset, 0);
+			propHuntFlags.StopMusic = new LittleEndian<bool>({ 0xBC, 0x92, 0x90, 0x4B, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0x10 }, -0x1, "LocalInstance::scan::PH_StopMusic", newOffset, 0);
 
 			Logging::LoggerService::LogInformation("Scanned game instance successfully.", __FUNCTION__);
 		}
@@ -272,7 +285,6 @@ namespace MemoryAccess
 			const int EQUIP_EXTRA_OFFSET = 0x8;
 
 			std::map<int, FlagAddresses> result;
-			LPCWSTR errorMessage = L"Failed to find mod address. Make sure that the mod is installed correctly in BCML and that BCML, Extended Memory and Multiplayer Utilities graphics packs are enabled.";
 
 			Logging::LoggerService::LogInformation("Scanning game flags...", __FUNCTION__);
 
@@ -284,9 +296,6 @@ namespace MemoryAccess
 			std::vector<int> FlagOrder2 = { 1, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 2, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 3, 30, 31, 32, 4, 5, 6, 7, 8, 9 };
 
 			uint64_t rawAddr = Memory::PatternScan(sig, Memory::getBaseAddress(), 8, 0);
-			if (rawAddr < 30000)
-				rawAddr = Memory::PatternScan(sig, Memory::getBaseAddress(), 0, 0, false, true);
-
 			if (rawAddr >= 30000)
 			{
 				uint64_t addr = rawAddr - 0x1;
@@ -297,13 +306,15 @@ namespace MemoryAccess
 					result[FlagOrder1[i]].ExistsFlag = addr;
 					addr += BOOL_OFFSET;
 				}
+				Logging::LoggerService::LogInformation("DispName & Exists flags mapped successfully.", __FUNCTION__);
+			}
+			else
+			{
+				Logging::LoggerService::LogWarning("DispName & Exists flags not found in region 8; defaulting to 0.", __FUNCTION__);
 			}
 
 			sig = { 0x87, 0x68, 0xFA, 0x81, -1, -1, -1, -1, 0x10, 0x29, 0x84, 0xC8 }; // Jugador10_Status
 			rawAddr = Memory::PatternScan(sig, Memory::getBaseAddress(), 8, 0);
-			if (rawAddr < 30000)
-				rawAddr = Memory::PatternScan(sig, Memory::getBaseAddress(), 0, 0, false, true);
-
 			if (rawAddr >= 30000)
 			{
 				uint64_t addr = rawAddr - 0x4;
@@ -312,13 +323,15 @@ namespace MemoryAccess
 					result[FlagOrder1[i]].StatusFlag = addr;
 					addr += INT_OFFSET;
 				}
+				Logging::LoggerService::LogInformation("Status flags mapped successfully.", __FUNCTION__);
+			}
+			else
+			{
+				Logging::LoggerService::LogWarning("Status flags not found in region 8; defaulting to 0.", __FUNCTION__);
 			}
 
 			sig = { 0xF2, 0xA5, 0xD4, 0xA2, -1, -1, -1, -1, 0x10, 0x29, 0x86, 0x38 }; // Jugador10_Name
 			rawAddr = Memory::PatternScan(sig, Memory::getBaseAddress(), 8, 0);
-			if (rawAddr < 30000)
-				rawAddr = Memory::PatternScan(sig, Memory::getBaseAddress(), 0, 0, false, true);
-
 			if (rawAddr >= 30000)
 			{
 				uint64_t addr = rawAddr - 0x20;
@@ -327,180 +340,140 @@ namespace MemoryAccess
 					result[FlagOrder1[i]].NameFlag = addr;
 					addr += STR32_OFFSET;
 				}
+				Logging::LoggerService::LogInformation("Name flags mapped successfully.", __FUNCTION__);
+			}
+			else
+			{
+				Logging::LoggerService::LogWarning("Name flags not found in region 8; defaulting to 0.", __FUNCTION__);
 			}
 
-			sig = { 0x0D, 0x4A, 0x75, 0x67, 0x61, 0x64, 0x6F, -1, 0x31, 0x5F, 0x48, 0x6F, 0x6C, 0x64 }; //Jugador1_Hold
-
+			// Hold & Animation flags (Optional eventflow strings)
+			sig = { 0x0D, -1, 0x4A, 0x75, 0x67, 0x61, 0x64, 0x6F, -1, 0x31, 0x5F, 0x48, 0x6F, 0x6C, 0x64 }; // Jugador1_Hold
 			uint64_t holdRaw = Memory::PatternScan(sig, Memory::getBaseAddress(), 8);
 			if (holdRaw < 30000)
-				holdRaw = Memory::PatternScan(sig, Memory::getBaseAddress(), 0, 0, false, true);
-
-			uint64_t addr = holdRaw + 0x1;
-			int retries = 0;
-
-			while (addr - 0x1 < 30000)
 			{
-				Logging::LoggerService::LogDebug("Could not find hold address.", __FUNCTION__);
-				Sleep(1000);
+				std::vector<int> sigShort = { 0x4A, 0x75, 0x67, 0x61, 0x64, 0x6F, 0x72, 0x31, 0x5F, 0x48, 0x6F, 0x6C, 0x64 };
+				holdRaw = Memory::PatternScan(sigShort, Memory::getBaseAddress(), 8);
+			}
 
-				if (retries == 15)
+			if (holdRaw >= 30000)
+			{
+				uint64_t addr = holdRaw + 0x1;
+				for (int i = 1; i < 33; i++)
 				{
-					Logging::LoggerService::LogWarning("Could not find hold address after 15 retries. Non-fatal.", __FUNCTION__);
-					break;
+					result[i].HoldFlag = addr;
+					addr += EQUIP_OFFSET;
+					if (i > 9)
+						addr += EQUIP_EXTRA_OFFSET;
 				}
 
-				holdRaw = Memory::PatternScan(sig, Memory::getBaseAddress(), 8);
-				if (holdRaw < 30000)
-					holdRaw = Memory::PatternScan(sig, Memory::getBaseAddress(), 0, 0, false, true);
+				addr += 0x1000;
+				std::vector<BYTE> animthing = { 0x4A, 0x75, 0x67, 0x61, 0x64, 0x6F, 0x72, 0x31 };
+				uint64_t offset = 0;
 
-				addr = holdRaw + 0x1;
-				retries++;
-			}
-
-			for (int i = 1; i < 33; i++)
-			{
-				result[i].HoldFlag = addr;
-
-				addr += EQUIP_OFFSET;
-
-				if (i > 9)
-					addr += EQUIP_EXTRA_OFFSET;
-			}
-
-			addr += 0x1000;
-			std::vector<BYTE> animthing = { 0x4A, 0x75, 0x67, 0x61, 0x64, 0x6F, 0x72, 0x31 };
-			uint64_t offset = 0;
-
-			while (offset < 5000)
-			{
-				if (Memory::read_bytes(addr + offset, 8, __FUNCTION__) == animthing)
+				while (offset < 0x8000)
 				{
-					addr = addr + offset;
-					break;
-				}
-
-				offset++;
-			}
-
-			if (offset == 5000)
-				addr = 0;
-
-			if (addr < 30000)
-			{
-				Logging::LoggerService::LogError("Could not find animation address.", __FUNCTION__);
-				throw errorMessage;
-			}
-
-			for (int i = 1; i < 34; i++)
-			{
-				std::stringstream stream;
-
-				if (Memory::read_string(addr + 8, 1, __FUNCTION__) == "_")
-					result[std::stoi(Memory::read_string(addr + 7, 1, __FUNCTION__))].AnimationFlag = addr;
-				else
-					result[std::stoi(Memory::read_string(addr + 7, 2, __FUNCTION__))].AnimationFlag = addr;
-				
-				uint64_t offset = 25;
-				std::vector<BYTE> jugador = { 0x4A, 0x75, 0x67, 0x61, 0x64, 0x6F, 0x72 };
-
-				if (i == 33)
-					break;
-
-				while (true)
-				{
-					if(Memory::read_string(addr + offset, 14, __FUNCTION__) == "animationthing")
-					{
-						if (Memory::read_string(addr + offset - 3, 1, __FUNCTION__) == "r")
-							addr = addr + offset - 9;
-						else
-							addr = addr + offset - 10;
-
-						break;
-					}
-
-					offset++;
-				}
-			}
-
-			//addr += 0x4000;
-			offset = 0;
-
-			std::vector<BYTE> attack = { 0x5F, 0x41, 0x74, 0x74, 0x61, 0x63, 0x6B, 0x41, 0x6E, 0x69, 0x6D, 0x61, 0x74, 0x69, 0x6F, 0x6E };
-
-			while (offset < 0x10000)
-			{
-				if (Memory::read_bytes(addr + offset, attack.size(), __FUNCTION__) == attack)
-				{
-					addr = addr + offset;
-
-					break;
-				}
-
-				offset++;
-			}
-
-			if (offset == 0x10000)
-			{
-				Logging::LoggerService::LogError("Could not find attack animation address.", __FUNCTION__);
-				throw errorMessage;
-			}
-
-			for (int i = 1; i < 33; i++)
-			{
-				if (Memory::read_bytes(addr - 0x9, 1, __FUNCTION__)[0] == 0x18) // Single digit
-				{
-					int playerNumber = std::stoi(Memory::read_string(addr - 0x1, 1, __FUNCTION__));
-					result[playerNumber].AttackAnimation = addr - 0x8;
-					addr += 29;
-				}
-				else
-				{
-					int playerNumber = std::stoi(Memory::read_string(addr - 0x2, 2, __FUNCTION__));
-					result[playerNumber].AttackAnimation = addr - 0x9;
-					addr += 28;
-				}
-			}
-
-			sig = { 0x06, 0x46, 0x40, 0xD2, 0x00, 0x45, 0x12, 0x98 };
-			addr = Memory::PatternScan(sig, Memory::getBaseAddress(), 8) + 0x1;
-
-			retries = 0;
-
-			while (addr < 30000)
-			{
-				Logging::LoggerService::LogDebug("Could not find map pin address.", __FUNCTION__);
-				Sleep(1000);
-
-				if (retries == 15)
-				{
-					throw std::exception("Failed to find mod address. Make sure that the mod is installed correctly in BCML.");
-				}
-
-				addr = Memory::PatternScan(sig, Memory::getBaseAddress(), 8) + 0x1;
-				retries++;
-			}
-
-			for (int i = 0; i < 32; i++)
-			{
-				result[FlagOrder2[i]].MapPin = addr;
-
-				uint64_t offset = 0x40;
-				std::vector<BYTE> MapPin = { 0x46, 0x40, 0xD2, 0x00, 0x45, 0x12, 0x98, 0x00 };
-
-				while (true)
-				{
-					if (Memory::read_bytes(addr + offset, 8, __FUNCTION__) == MapPin)
+					if (Memory::read_bytes(addr + offset, 8, __FUNCTION__) == animthing)
 					{
 						addr = addr + offset;
 						break;
 					}
-
-					offset += 0x4;
+					offset++;
 				}
+
+				if (offset < 0x8000 && addr >= 30000)
+				{
+					for (int i = 1; i < 34; i++)
+					{
+						if (Memory::read_string(addr + 8, 1, __FUNCTION__) == "_")
+							result[std::stoi(Memory::read_string(addr + 7, 1, __FUNCTION__))].AnimationFlag = addr;
+						else
+							result[std::stoi(Memory::read_string(addr + 7, 2, __FUNCTION__))].AnimationFlag = addr;
+
+						uint64_t off = 25;
+						if (i == 33) break;
+
+						while (off < 0x1000)
+						{
+							if (Memory::read_string(addr + off, 14, __FUNCTION__) == "animationthing")
+							{
+								if (Memory::read_string(addr + off - 3, 1, __FUNCTION__) == "r")
+									addr = addr + off - 9;
+								else
+									addr = addr + off - 10;
+								break;
+							}
+							off++;
+						}
+					}
+
+					offset = 0;
+					std::vector<BYTE> attack = { 0x5F, 0x41, 0x74, 0x74, 0x61, 0x63, 0x6B, 0x41, 0x6E, 0x69, 0x6D, 0x61, 0x74, 0x69, 0x6F, 0x6E };
+					while (offset < 0x20000)
+					{
+						if (Memory::read_bytes(addr + offset, attack.size(), __FUNCTION__) == attack)
+						{
+							addr = addr + offset;
+							break;
+						}
+						offset++;
+					}
+
+					if (offset < 0x20000 && addr >= 30000)
+					{
+						for (int i = 1; i < 33; i++)
+						{
+							if (Memory::read_bytes(addr - 0x9, 1, __FUNCTION__)[0] == 0x18)
+							{
+								int pNum = std::stoi(Memory::read_string(addr - 0x1, 1, __FUNCTION__));
+								result[pNum].AttackAnimation = addr - 0x8;
+								addr += 29;
+							}
+							else
+							{
+								int pNum = std::stoi(Memory::read_string(addr - 0x2, 2, __FUNCTION__));
+								result[pNum].AttackAnimation = addr - 0x9;
+								addr += 28;
+							}
+						}
+					}
+				}
+				Logging::LoggerService::LogInformation("Hold & Animation flags mapped successfully.", __FUNCTION__);
+			}
+			else
+			{
+				Logging::LoggerService::LogWarning("Hold & Animation strings not found; defaulting to 0 (non-fatal).", __FUNCTION__);
+			}
+
+			// MapPin (Optional)
+			sig = { 0x06, 0x46, 0x40, 0xD2, 0x00, 0x45, 0x12, 0x98 };
+			uint64_t mapAddr = Memory::PatternScan(sig, Memory::getBaseAddress(), 8);
+			if (mapAddr >= 30000)
+			{
+				mapAddr += 0x1;
+				for (int i = 0; i < 32; i++)
+				{
+					result[FlagOrder2[i]].MapPin = mapAddr;
+					uint64_t offset = 0x40;
+					std::vector<BYTE> MapPinBytes = { 0x46, 0x40, 0xD2, 0x00, 0x45, 0x12, 0x98, 0x00 };
+					while (offset < 0x1000)
+					{
+						if (Memory::read_bytes(mapAddr + offset, 8, __FUNCTION__) == MapPinBytes)
+						{
+							mapAddr = mapAddr + offset;
+							break;
+						}
+						offset += 0x4;
+					}
+				}
+				Logging::LoggerService::LogInformation("MapPin flags mapped successfully.", __FUNCTION__);
+			}
+			else
+			{
+				Logging::LoggerService::LogWarning("MapPin address not found in region 8; defaulting to 0 (non-fatal).", __FUNCTION__);
 			}
 
 			Logging::LoggerService::LogInformation("Scanned game flags successfully.", __FUNCTION__);
-
 			return result;
 		}
 

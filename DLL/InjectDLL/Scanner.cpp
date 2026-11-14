@@ -1,6 +1,17 @@
 #include "Memory.h"
 #include <iostream>
 
+static inline bool SafeReadByte(const void* addr, byte* out)
+{
+    __try {
+        *out = *(const byte*)addr;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 uint64_t Memory::PatternScan(std::vector<int> signature, uint64_t baseAddr, int region, uint64_t regionOffset, bool Multiple, bool multipleRegions, uint64_t regionMaxOffset)
 {
 
@@ -8,7 +19,10 @@ uint64_t Memory::PatternScan(std::vector<int> signature, uint64_t baseAddr, int 
     GetSystemInfo(&si);
 
     uint64_t startAddress = baseAddr;
+    uint64_t maxGuest = baseAddr != 0 ? (baseAddr + 0x100000000ULL) : (uint64_t)(si.lpMaximumApplicationAddress);
     uint64_t endAddress = (uint64_t)(si.lpMaximumApplicationAddress);
+    if (endAddress > maxGuest)
+        endAddress = maxGuest;
 
     MEMORY_BASIC_INFORMATION Scanmbi{ 0 };
     DWORD protectflags = (PAGE_GUARD | PAGE_NOCACHE | PAGE_NOACCESS);
@@ -76,23 +90,10 @@ uint64_t Memory::PatternScan(std::vector<int> signature, uint64_t baseAddr, int 
             for (uint64_t currentIndex = startingAddress; currentIndex < endAddress;) {
 
                 for (uint64_t sigIndex = maxIndex; sigIndex >= 0; sigIndex--) {
-                    byte reading;
-
-                    try 
-                    {
-                        reading = *(byte*)((uint64_t)Scanmbi.BaseAddress + currentIndex + sigIndex);
-                    }
-                    catch (const std::exception& ex)
-                    {
-                        std::stringstream stream;
-                        stream << "Exception thrown: " << ex.what();
-                        Logging::LoggerService::LogError(stream.str(), __FUNCTION__);
-                        return NULL;
-                    }
-                    catch (...)
-                    {
-                        Logging::LoggerService::LogError("Catched unknown exception.", __FUNCTION__);
-                        return NULL;
+                    byte reading = 0;
+                    if (!SafeReadByte((const void*)((uint64_t)Scanmbi.BaseAddress + currentIndex + sigIndex), &reading)) {
+                        currentIndex += 1;
+                        break;
                     }
 
                     if (reading != signature.at(sigIndex) && signature.at(sigIndex) != -1) {
@@ -100,8 +101,9 @@ uint64_t Memory::PatternScan(std::vector<int> signature, uint64_t baseAddr, int 
                         break;
                     }
                     else if (sigIndex == 0) {
-
-                        if (signature.at(signature.size() - 1) != *(byte*)((uint64_t)Scanmbi.BaseAddress + currentIndex + signature.size() - 1))
+                        byte lastByte = 0;
+                        if (!SafeReadByte((const void*)((uint64_t)Scanmbi.BaseAddress + currentIndex + signature.size() - 1), &lastByte) ||
+                            signature.at(signature.size() - 1) != lastByte)
                         {
                             currentIndex += 1;
                             break;
@@ -119,6 +121,9 @@ uint64_t Memory::PatternScan(std::vector<int> signature, uint64_t baseAddr, int 
 
             i = (uint64_t)Scanmbi.BaseAddress + Scanmbi.RegionSize;
         }
+        else {
+            i += 0x1000;
+        }
     }
     return NULL;
 
@@ -132,7 +137,10 @@ std::vector<uint64_t> Memory::PatternScanMultiple(std::vector<int> signature, ui
     GetSystemInfo(&si);
 
     uint64_t startAddress = baseAddr;
+    uint64_t maxGuest = baseAddr != 0 ? (baseAddr + 0x100000000ULL) : (uint64_t)(si.lpMaximumApplicationAddress);
     uint64_t endAddress = (uint64_t)(si.lpMaximumApplicationAddress);
+    if (endAddress > maxGuest)
+        endAddress = maxGuest;
 
     MEMORY_BASIC_INFORMATION mbi{ 0 };
     DWORD protectflags = (PAGE_GUARD | PAGE_NOCACHE | PAGE_NOACCESS);
@@ -203,7 +211,11 @@ std::vector<uint64_t> Memory::PatternScanMultiple(std::vector<int> signature, ui
             for (uint64_t currentIndex = startingAddress; currentIndex < endAddress;) {
 
                 for (uint64_t sigIndex = maxIndex; sigIndex >= 0; sigIndex--) {
-                    byte reading = *(byte*)((uint64_t)mbi.BaseAddress + currentIndex + sigIndex);
+                    byte reading = 0;
+                    if (!SafeReadByte((const void*)((uint64_t)mbi.BaseAddress + currentIndex + sigIndex), &reading)) {
+                        currentIndex += 1;
+                        break;
+                    }
 
                     if (reading != signature.at(sigIndex) && signature.at(sigIndex) != -1) {
                         currentIndex += shiftTable[reading];
@@ -211,7 +223,9 @@ std::vector<uint64_t> Memory::PatternScanMultiple(std::vector<int> signature, ui
                     }
                     else if (sigIndex == 0) {
 
-                        if (signature.at(signature.size() - 1) != *(byte*)((uint64_t)mbi.BaseAddress + currentIndex + signature.size() - 1))
+                        byte lastByte = 0;
+                        if (!SafeReadByte((const void*)((uint64_t)mbi.BaseAddress + currentIndex + signature.size() - 1), &lastByte) ||
+                            signature.at(signature.size() - 1) != lastByte)
                         {
                             currentIndex += 1;
                             break;
@@ -236,6 +250,9 @@ std::vector<uint64_t> Memory::PatternScanMultiple(std::vector<int> signature, ui
             }
 
             i = (uint64_t)mbi.BaseAddress + mbi.RegionSize;
+        }
+        else {
+            i += 0x1000;
         }
     }
     return result;
@@ -274,7 +291,10 @@ uint64_t Memory::findRegionBaseAddress(uint64_t baseAddr, int region)
     GetSystemInfo(&si);
 
     uint64_t startAddress = baseAddr;
+    uint64_t maxGuest = baseAddr != 0 ? (baseAddr + 0x100000000ULL) : (uint64_t)(si.lpMaximumApplicationAddress);
     uint64_t endAddress = (uint64_t)(si.lpMaximumApplicationAddress);
+    if (endAddress > maxGuest)
+        endAddress = maxGuest;
 
     MEMORY_BASIC_INFORMATION mbi{ 0 };
     DWORD protectflags = (PAGE_GUARD | PAGE_NOCACHE | PAGE_NOACCESS);

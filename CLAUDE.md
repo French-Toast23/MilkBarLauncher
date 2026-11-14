@@ -204,6 +204,23 @@ Copy-Item "Build\Resources\InjectDLL.dll" "WPF .NET 6\Breath of the Wild Multipl
   - Replaced fatal exception throwing on non-critical flags with `AddressSet = false` and warning logs, allowing gameplay to proceed.
   - Added `isAddressSet()` safety check in `Main::CheckIfPaused()` to default to unpaused if the flag is absent.
 
+### J. Unblocking Actor Spawning Pipeline & Resolving Invisibility
+* **Symptoms**:
+  1. Popup dialog appeared ~100 seconds after loading save: `"Failed to find mod address..."`.
+  2. Server console showed `Player Vanitas disconnected.`
+  3. No remote player models (`Jugador1`..`32`) were visible in the 3D world on either instance.
+* **Root Causes**:
+  1. **Fatal Exception in `LocationAccess.h`**: `LocationAccess()` attempted 15 retries with `Sleep(2000)` and on failure threw `throw L"Failed to find mod address..."`.
+  2. **Initialization Pipeline Abort**: In `dllmain_Functions.cpp`, `catch (LPCWSTR ex)` caught the exception from `LocationAccess`, showed a modal `MessageBoxW`, and called `Main::disconnectFromServer()`. This bypassed `setActorSpawning(&queue_mutex, queueActor, queueActor)` and left `Instances::PlayerList` unpopulated.
+  3. **Location Invisibility Gate**: In `Player::PThread()`, remote actor creation (`action = ActCreate`) required `shouldExist = true`, which checked `LocalLocation.Map == this->Location->Map && LocalLocation.Map == "MainField"`. With `LocationAccess` uninitialized, both map strings were empty (`""`), permanently evaluating `shouldExist = false` and preventing remote actors from ever spawning.
+  4. **Unbounded Scanner AV**: In `Scanner.cpp`, scanning across unbounded host virtual memory caused access violation `0xc0000005` in Cemu.
+* **Fixes Implemented**:
+  1. **Non-fatal `LocationAccess.h`**: Initialized `LastKnown` to `Map = "MainField"`, `Section = "None"`. Fast non-blocking scan; if not found, logs a warning and gracefully defaults without sleeping, throwing, or calling `exit(1)`.
+  2. **Unconditional `PlayerList` & Spawning Initialization**: Removed `MessageBoxW` and `disconnectFromServer` from `scan()` and `scanPlayerFlags()`. `setActorSpawning` and `Instances::PlayerList` (all 32 players) now initialize unconditionally.
+  3. **Map Fallback in `Player.cpp`**: `Player::PThread()` now treats empty or unset map strings as `"MainField"` so remote players spawn immediately in the open world.
+  4. **SEH Guard & Clamp in `Scanner.cpp`**: Added `SafeReadByte` with `__try / __except` and clamped scans to `baseAddr + 0x100000000ULL` (4GB Wii U boundary).
+  5. **Queued Actor Logging**: Added explicit logging in `queueActor(int playerNumber, ...)` for complete visibility into the spawn ring buffer.
+
 ---
 
 ### WPF .NET 8 Launcher (`Breath of the Wild Multiplayer.exe`)

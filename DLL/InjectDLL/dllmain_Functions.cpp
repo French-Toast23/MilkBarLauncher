@@ -1826,33 +1826,44 @@ void Main::mainServerLoop()
         }
 
         for (auto const& pair : serverResponse->NameData->Names)
-            Instances::PlayerList[pair.first + 1]->Name = pair.second;
+        {
+            if (Instances::PlayerList.count(pair.first + 1) && Instances::PlayerList[pair.first + 1])
+                Instances::PlayerList[pair.first + 1]->Name = pair.second;
+        }
 
         for (auto const& pair : serverResponse->ModelData->Models)
         {
             if (pair.first == Main::playerNumber)
             {
-                Instances::PlayerList[32]->Model = pair.second;
-                Instances::PlayerList[32]->Equipment->Changed = true;
-
-                if (pair.second.ModelType != 2)
+                if (Instances::PlayerList.count(32) && Instances::PlayerList[32])
                 {
-                    Instances::PlayerList[32]->Model.Bumii.ffsd.no_use_ffsd = 1;
-                }
+                    Instances::PlayerList[32]->Model = pair.second;
+                    Instances::PlayerList[32]->Equipment->Changed = true;
 
-                Instances::PlayerList[32]->Bumii->Initialize(Instances::PlayerList[32]->Model.Bumii);
+                    if (pair.second.ModelType != 2)
+                    {
+                        Instances::PlayerList[32]->Model.Bumii.ffsd.no_use_ffsd = 1;
+                    }
+
+                    if (Instances::PlayerList[32]->Bumii)
+                        Instances::PlayerList[32]->Bumii->Initialize(Instances::PlayerList[32]->Model.Bumii);
+                }
             }
             else
             {
-                Instances::PlayerList[pair.first + 1]->Model = pair.second;
-                Instances::PlayerList[pair.first + 1]->Equipment->Changed = true;
-
-                if (pair.second.ModelType != 2)
+                if (Instances::PlayerList.count(pair.first + 1) && Instances::PlayerList[pair.first + 1])
                 {
-                    Instances::PlayerList[pair.first + 1]->Model.Bumii.ffsd.no_use_ffsd = 1;
-                }
+                    Instances::PlayerList[pair.first + 1]->Model = pair.second;
+                    Instances::PlayerList[pair.first + 1]->Equipment->Changed = true;
 
-                Instances::PlayerList[pair.first + 1]->Bumii->Initialize(Instances::PlayerList[pair.first + 1]->Model.Bumii);
+                    if (pair.second.ModelType != 2)
+                    {
+                        Instances::PlayerList[pair.first + 1]->Model.Bumii.ffsd.no_use_ffsd = 1;
+                    }
+
+                    if (Instances::PlayerList[pair.first + 1]->Bumii)
+                        Instances::PlayerList[pair.first + 1]->Bumii->Initialize(Instances::PlayerList[pair.first + 1]->Model.Bumii);
+                }
             }
         }
 
@@ -1863,8 +1874,11 @@ void Main::mainServerLoop()
             if (player->PlayerNumber + 1 == 32 && Main::HidePlayer32)
                 continue;
 
-            Instances::PlayerList[player->PlayerNumber + 1]->set(player, serverResponse->NetworkData->DisplayNames, Game::GameInstance->IsGamePaused);
-            ConnectedPlayers.push_back(player->PlayerNumber + 1);
+            if (Instances::PlayerList.count(player->PlayerNumber + 1) && Instances::PlayerList[player->PlayerNumber + 1])
+            {
+                Instances::PlayerList[player->PlayerNumber + 1]->set(player, serverResponse->NetworkData->DisplayNames, Game::GameInstance->IsGamePaused);
+                ConnectedPlayers.push_back(player->PlayerNumber + 1);
+            }
 
             if (serverResponse->PropHuntData->Phase == 2 && player->Health == 0)
             {
@@ -1873,20 +1887,26 @@ void Main::mainServerLoop()
                     continue;
                 }
 
-                Logging::LoggerService::LogInformation(Instances::PlayerList[player->PlayerNumber + 1]->Name + " was found.", __FUNCTION__);
-                Memory::MessagerService::AddMessage(Instances::PlayerList[player->PlayerNumber + 1]->Name + " was found.");
+                if (Instances::PlayerList.count(player->PlayerNumber + 1) && Instances::PlayerList[player->PlayerNumber + 1])
+                {
+                    Logging::LoggerService::LogInformation(Instances::PlayerList[player->PlayerNumber + 1]->Name + " was found.", __FUNCTION__);
+                    Memory::MessagerService::AddMessage(Instances::PlayerList[player->PlayerNumber + 1]->Name + " was found.");
+                }
                 Main::FoundPlayers.push_back(player->PlayerNumber + 1);
             }
         }
 
         for (auto const& player : serverResponse->FarPlayers)
         {
-            Instances::PlayerList[player->PlayerNumber + 1]->set(player, serverResponse->NetworkData->DisplayNames, Game::GameInstance->IsGamePaused);
-            ConnectedPlayers.push_back(player->PlayerNumber + 1);
+            if (Instances::PlayerList.count(player->PlayerNumber + 1) && Instances::PlayerList[player->PlayerNumber + 1])
+            {
+                Instances::PlayerList[player->PlayerNumber + 1]->set(player, serverResponse->NetworkData->DisplayNames, Game::GameInstance->IsGamePaused);
+                ConnectedPlayers.push_back(player->PlayerNumber + 1);
+            }
         }
 
         for (int i = 1; i < 33; i++)
-            if (Instances::PlayerList[i]->connected && std::find(ConnectedPlayers.begin(), ConnectedPlayers.end(), i) == ConnectedPlayers.end())
+            if (Instances::PlayerList.count(i) && Instances::PlayerList[i] && Instances::PlayerList[i]->connected && std::find(ConnectedPlayers.begin(), ConnectedPlayers.end(), i) == ConnectedPlayers.end())
                 Instances::PlayerList[i]->Disconnect();
 
         Game::GameInstance->EnemyService->SetServerData(serverResponse->EnemyData);
@@ -1953,11 +1973,19 @@ void Main::Setup()
     }
     catch (LPCWSTR ex)
     {
-        MessageBoxW(NULL, ex, L"", MB_OK);
-        Main::disconnectFromServer("Incorrect mod installation. Validate graphic packs and BCML.");
+        Logging::LoggerService::LogWarning("Game instance scan threw LPCWSTR (non-fatal): continuing.");
+    }
+    catch (const std::exception& ex)
+    {
+        Logging::LoggerService::LogWarning(std::string("Game instance scan threw std::exception (non-fatal): ") + ex.what());
+    }
+    catch (...)
+    {
+        Logging::LoggerService::LogWarning("Game instance scan threw unknown exception (non-fatal): continuing.");
     }
 
     Game::GameInstance->setActorSpawning(&queue_mutex, queueActor, queueActor);
+    Logging::LoggerService::LogInformation("setActorSpawning initialized.", __FUNCTION__);
 
     /* Services startup */
     if (isQuestSync)
@@ -1973,12 +2001,20 @@ void Main::Setup()
     }
     catch (LPCWSTR ex)
     {
-        MessageBoxW(NULL, ex, L"", MB_OK);
-        Main::disconnectFromServer("Incorrect mod installation. Validate graphic packs and BCML.");
+        Logging::LoggerService::LogWarning("scanPlayerFlags threw LPCWSTR (non-fatal): continuing with default flags.");
+    }
+    catch (const std::exception& ex)
+    {
+        Logging::LoggerService::LogWarning(std::string("scanPlayerFlags threw std::exception (non-fatal): ") + ex.what());
+    }
+    catch (...)
+    {
+        Logging::LoggerService::LogWarning("scanPlayerFlags threw unknown exception (non-fatal): continuing with default flags.");
     }
 
     for (int i = 1; i < 33; i++)
         Instances::PlayerList.insert({ i, new MemoryAccess::Player(i, Game::GameInstance, Flags[i]) });
+    Logging::LoggerService::LogInformation("Instances::PlayerList initialized with 32 player instances.", __FUNCTION__);
 
     Flags.clear();
 
