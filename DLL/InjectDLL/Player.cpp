@@ -1,5 +1,9 @@
 #include "Player.h"
 
+namespace Main {
+	extern uint64_t s_LocalLinkAddr;
+}
+
 using namespace MemoryAccess;
 
 void Player::PThread()
@@ -18,6 +22,12 @@ void Player::PThread()
 		try 
 		{
 			if (!connected || isFar) {
+				Sleep(100);
+				continue;
+			}
+
+			if (GameInstance == nullptr || GameInstance->baseAddr == 0 || Main::s_LocalLinkAddr == 0)
+			{
 				Sleep(100);
 				continue;
 			}
@@ -94,14 +104,14 @@ void Player::PThread()
 					continue;
 				}
 
-				Logging::LoggerService::LogDebug("Selected action: Create. Reason: " + reasonToSpawn, __FUNCTION__);
-
-				if(GameInstance->IsPaused())
+				if (GameInstance->baseAddr == 0 || Main::s_LocalLinkAddr == 0 || GameInstance->IsPaused())
 				{
 					LastSpawn = GetTickCount();
-					Logging::LoggerService::LogWarning("Create request failed: Game is paused.");
+					Logging::LoggerService::LogWarning("Create request failed: World is not loaded or game is paused.");
 					continue;
 				}
+
+				Logging::LoggerService::LogDebug("Selected action: Create. Reason: " + reasonToSpawn, __FUNCTION__);
 
 				if (this->baseAddr != 0 && this->Status && this->Status->isAddressSet())
 					this->Status->set(1, __FUNCTION__);
@@ -111,6 +121,12 @@ void Player::PThread()
 
 				while (this->baseAddr != 0 || GameInstance->IsPaused())
 				{
+					if (GameInstance->baseAddr == 0 || Main::s_LocalLinkAddr == 0)
+					{
+						this->setAddress(0);
+						break;
+					}
+
 					if (GameInstance->IsPaused())
 						deleteTime = GetTickCount();
 
@@ -125,7 +141,7 @@ void Player::PThread()
 						if (this->Status && this->Status->isAddressSet())
 							this->Status->set(0, __FUNCTION__);
 						LastSpawn = GetTickCount();
-						continue;
+						break;
 					}
 
 					Sleep(100);
@@ -135,10 +151,10 @@ void Player::PThread()
 				if (this->Status && this->Status->isAddressSet())
 					this->Status->set(0, __FUNCTION__);
 
-				if (GameInstance->IsPaused())
+				if (GameInstance->baseAddr == 0 || Main::s_LocalLinkAddr == 0 || GameInstance->IsPaused())
 				{
 					LastSpawn = GetTickCount();
-					Logging::LoggerService::LogWarning("Create request failed: Game is paused.");
+					Logging::LoggerService::LogWarning("Create request failed: World is not loaded or game is paused.");
 					continue;
 				}
 

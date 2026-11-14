@@ -179,8 +179,27 @@ namespace MemoryAccess
 				else
 				{
 					this->Status->set(0, __FUNCTION__);
-					if (AnimAddr >= 30000)
-						Memory::write_string(AnimAddr, "Anim_" + std::to_string(UINT32(PlayerData->Animation)), DEFAULT_ANIM.size(), __FUNCTION__);
+					if (AnimAddr >= 30000 && PlayerData->Animation != 0)
+					{
+						if (PlayerData->Animation != LastAnimation)
+						{
+							Memory::write_string(AnimAddr, "Anim_" + std::to_string(UINT32(PlayerData->Animation)), DEFAULT_ANIM.size(), __FUNCTION__);
+						}
+					}
+				}
+			}
+
+			if (PlayerData->Animation != LastAnimation && PlayerData->Animation != 0)
+			{
+				static int s_loggedAnimCount = 0;
+				if (s_loggedAnimCount < 50)
+				{
+					s_loggedAnimCount++;
+					std::stringstream ss;
+					ss << "Player " << (int)PlayerNumber << " animation changed: "
+					   << LastAnimation << " -> " << PlayerData->Animation
+					   << " (Anim_" << std::to_string(UINT32(PlayerData->Animation)) << ")";
+					Logging::LoggerService::LogInformation(ss.str());
 				}
 			}
 			

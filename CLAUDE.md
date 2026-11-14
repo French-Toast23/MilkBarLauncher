@@ -273,6 +273,18 @@ Copy-Item "Build\Resources\InjectDLL.dll" "WPF .NET 6\Breath of the Wild Multipl
 
 ---
 
+### N. Teleportation / Fast-Travel Crash & Remote Player T-Pose Fix
+- **Problem 1 (Fast-Travel Crash)**: Teleporting triggered an access violation (`0xc0000005`) at PPC `0x03948078` (`movbe eax, dword ptr [r13 + rdx + 0x84]` with `rdx = 0`). During fast-travel, BotW erased local Link and other actors while unloading scene memory. `Player::PThread()` immediately observed `!exists && shouldExist`, queued actor creation, and `createActor_` was dispatched into a deallocated scene graph.
+- **Problem 2 (Remote Player T-Pose)**: The ActionSequence animation pointer chain (`Animation = new BigEndian<int>(this->baseAddr, { 0x448, 0x4C, 0x10, 0x19C, 0x38, 0xA0, 0x10, -0x5C }, 0x10)`) was queried only once at scan time before Link's AS controller was initialized. Because it failed initial lookup, `AddressSet` became `false` permanently. `get_characterData()` returned `0` on every frame, causing the receiving client to write `"Anim_0"`, falling back to the bind T-pose.
+- **Fix**:
+  1. **Strict World-State Lifecycle Gates**: Added guards `if (Main::s_LocalLinkAddr == 0 || !Game::GameInstance || Game::GameInstance->baseAddr == 0)` to `setupActor`, `mainFn`, and `ProcessActorSpawnsInWeather`.
+  2. **Scene Unload Cleanup**: In `OnActorErase`, when `GameROMPlayer` is erased, immediately clear `queuedActors`, clear `PlayerQueue`, and reset all remote player instances (`setAddress(0)`).
+  3. **PThread Gating**: In `Player::PThread()`, skip execution if local Link does not exist in the world (`s_LocalLinkAddr == 0`).
+  4. **Dynamic `resolveAnimation()`**: Added on-demand resolution in `LocalInstance::get_characterData()` (mirroring `resolvePosition()`). The ActionSequence pointer chain is resolved dynamically once memory is ready and re-resolved whenever Link teleports or respawns.
+  5. **Animation Transmission Safety**: `Player.h` ignores `0` animations (never writes `"Anim_0"`), writes string changes only on transition, and logs live animation changes.
+
+---
+
 ### WPF .NET 8 Launcher (`Breath of the Wild Multiplayer.exe`)
 ```powershell
 dotnet build "WPF .NET 6\Breath of the Wild Multiplayer\Breath of the Wild Multiplayer.csproj" -c Release
@@ -288,8 +300,14 @@ dotnet build "WPF .NET 6\Breath of the Wild Multiplayer\Breath of the Wild Multi
    - `init(): All HLE interceptors registered successfully.`
    - `BindHLEAddresses Readback: ...`
    - `OnActorCreate: actor 'GameROMPlayer'` binds local Link.
-4. **Multiplayer Spawn**:
+4. **Multiplayer Spawn & 3D Render**:
    - Instance 2 connects to host (`127.0.0.1:5050`).
    - Host logs `setupActor` queuing `Jugador1`.
-   - `ActorCreator::createActor_("Jugador1")` finds `Jugador1` in `ActorInfo.product.sbyml`.
-   - `OnActorCreate: actor 'Jugador1'` binds remote player model.
+   - `ActorCreator::createActor_("Jugador1")` executes cleanly.
+   - Remote player model renders in full 3D (`media_1794690243707_acf0f909.jpg`).
+5. **Animation Synchronization**:
+   - Verify `LocalInstance::resolveAnimation: Resolved animation address ...` in log.
+   - Walking, running, jumping, climbing, attacking, and idle play animations smoothly instead of bind T-pose.
+6. **Fast-Travel / Teleportation Stability**:
+   - Fast-travel between towers/shrines on both instances.
+   - Confirm zero crashes during world scene unload and reload.

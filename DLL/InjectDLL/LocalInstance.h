@@ -4,6 +4,10 @@
 
 using namespace DataTypes;
 
+namespace Main {
+	extern uint64_t s_LocalLinkAddr;
+}
+
 namespace MemoryAccess
 {
 	class WorldObj
@@ -153,6 +157,12 @@ namespace MemoryAccess
 
 		void RequestCreate(int playerNumber, Vec3f pos = Vec3f(0, 0, 0))
 		{
+			if (this->baseAddr == 0 || Main::s_LocalLinkAddr == 0)
+			{
+				Logging::LoggerService::LogWarning("Create request failed: Local Link is not active in world.");
+				return;
+			}
+
 			if (IsPaused())
 			{
 				Logging::LoggerService::LogWarning("Create request failed: Game is paused.");
@@ -187,6 +197,9 @@ namespace MemoryAccess
 			if (!queue_mutex || !queuePlayer)
 				return;
 
+			if (this->baseAddr == 0 || Main::s_LocalLinkAddr == 0 || IsGamePaused)
+				return;
+
 			queue_mutex->lock();
 
 			if (PlayerQueue.size() > 0 && !IsGamePaused)
@@ -206,6 +219,12 @@ namespace MemoryAccess
 
 		bool RequestCreate(std::string actor, Vec3f pos = Vec3f(0, 0, 0))
 		{
+			if (this->baseAddr == 0 || Main::s_LocalLinkAddr == 0)
+			{
+				Logging::LoggerService::LogWarning("Create request failed: Local Link is not active in world.");
+				return false;
+			}
+
 			if (IsPaused())
 			{
 				Logging::LoggerService::LogWarning("Create request failed: Game is paused.");
@@ -242,14 +261,52 @@ namespace MemoryAccess
 			return true;
 		}
 
+		void ClearQueue()
+		{
+			if (queue_mutex)
+			{
+				queue_mutex->lock();
+				PlayerQueue.clear();
+				queue_mutex->unlock();
+			}
+		}
+
+		bool resolveAnimation()
+		{
+			if (this->baseAddr == 0) return false;
+			if (this->Animation && this->Animation->isAddressSet()) return true;
+
+			std::vector<int> offsets = { 0x448, 0x4C, 0x10, 0x19C, 0x38, 0xA0, 0x10, -0x5C };
+			uint64_t animAddr = Memory::ReadPointers(this->baseAddr, offsets, true) + 0x10;
+			if (animAddr >= 30000)
+			{
+				if (!this->Animation)
+					this->Animation = new BigEndian<int>(animAddr, "Memory::LocalInstance::resolveAnimation");
+				else
+					this->Animation->setAddress(animAddr, "Memory::LocalInstance::resolveAnimation", false);
+
+				int initialVal = this->Animation->get("resolveAnimation");
+				std::stringstream ss;
+				ss << "LocalInstance::resolveAnimation: Resolved animation address 0x" << std::hex << animAddr
+				   << " for Link 0x" << this->baseAddr << " initialVal=" << std::dec << initialVal;
+				Logging::LoggerService::LogInformation(ss.str());
+				return true;
+			}
+			return false;
+		}
+
 		void setAddress(uint64_t addr)
 		{
 			Actor::setAddress(addr);
+			if (Animation) Animation->setAddress(0, "setAddress");
+			if (Health && addr != 0) Health->setAddress(Memory::getBaseAddress() + addr + 0x540, "setAddress", false);
+			if (IsEquipped && addr != 0) IsEquipped->setAddress(Memory::ReadPointers(addr, { 0x394, 0xAC, 0xA4 }, true), "setAddress", false);
 		}
 
 		void scan()
 		{
-			Animation = new BigEndian<int>(this->baseAddr, { 0x448, 0x4C, 0x10, 0x19C, 0x38, 0xA0, 0x10, -0x5C }, 0x10, "Memory::LocalInstance::setAddress::Animation");
+			Animation = new BigEndian<int>(0, "Memory::LocalInstance::setAddress::Animation");
+			resolveAnimation();
 
 			Logging::LoggerService::LogInformation("Scanning game instance...", __FUNCTION__);
 
@@ -681,15 +738,20 @@ namespace MemoryAccess
 				this->resolvePosition();
 			}
 
+			if (!this->Animation || !this->Animation->isAddressSet())
+			{
+				this->resolveAnimation();
+			}
+
 			result->Position = this->Position->get(__FUNCTION__);
 			result->Rotation1 = this->Rotation1->get(__FUNCTION__);
 			result->Rotation2 = this->Rotation2->get(__FUNCTION__);
 			result->Rotation3 = this->Rotation3->get(__FUNCTION__);
 			result->Rotation4 = this->Rotation4->get(__FUNCTION__);
-			result->Animation = this->Animation->get(__FUNCTION__);
-			result->Health = this->Health->get(__FUNCTION__);
-			result->AtkUp = this->AtkUp->get(__FUNCTION__);
-			result->IsEquipped = this->IsEquipped->get(__FUNCTION__);
+			result->Animation = (this->Animation && this->Animation->isAddressSet()) ? this->Animation->get(__FUNCTION__) : 0;
+			result->Health = (this->Health && this->Health->isAddressSet()) ? this->Health->get(__FUNCTION__) : 0;
+			result->AtkUp = (this->AtkUp && this->AtkUp->isAddressSet()) ? this->AtkUp->get(__FUNCTION__) : 0;
+			result->IsEquipped = (this->IsEquipped && this->IsEquipped->isAddressSet()) ? this->IsEquipped->get(__FUNCTION__) : false;
 			result->Equipment = this->Equipment->getEquipment(__FUNCTION__);
 			result->Location = this->Location->get(__FUNCTION__);
 			result->Bomb = this->Bomb->get(__FUNCTION__);

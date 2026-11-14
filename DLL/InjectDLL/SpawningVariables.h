@@ -168,6 +168,12 @@ void queueActor(std::string actorName, float Position[3])
 }
 
 void setupActor(PPCInterpreter_t* hCPU, TransferableData& trnsData, InstanceData& instData, uint32_t startRingBuffer, uint32_t endRingBuffer, uint64_t baseAddress) {
+	if (Main::s_LocalLinkAddr == 0 || !Game::GameInstance || Game::GameInstance->baseAddr == 0)
+		return;
+
+	if (queuedActors.empty())
+		return;
+
 	QueueActor qAct = queuedActors[0];
 
 
@@ -291,6 +297,9 @@ void mainFn(PPCInterpreter_t* hCPU, uint32_t startTrnsData, uint32_t startRingBu
 	if (baseAddress == 0 || !memInstance || startTrnsData < 0x1000)
 		return;
 
+	if (Main::s_LocalLinkAddr == 0 || !Game::GameInstance || Game::GameInstance->baseAddr == 0)
+		return;
+
 	s_startTrnsDataGuestAddr = startTrnsData;
 	s_storageStartGuestAddr = startRingBuffer;
 	s_storageEndGuestAddr = endRingBuffer;
@@ -353,6 +362,9 @@ Weather newWeather = (Weather)0;
 void ProcessActorSpawnsInWeather(PPCInterpreter_t* hCPU, uint32_t mapAddr)
 {
 	if (!hCPU || Main::baseAddr == 0 || !memInstance || mapAddr == 0)
+		return;
+
+	if (Main::s_LocalLinkAddr == 0 || !Game::GameInstance || Game::GameInstance->baseAddr == 0)
 		return;
 
 	if (s_startTrnsDataGuestAddr == 0)
@@ -683,7 +695,23 @@ void OnActorErase(PPCInterpreter_t* hCPU)
 		Logging::LoggerService::LogInformation("Link actor erased.", __FUNCTION__);
 		Main::s_LocalLinkAddr = 0;
 		if (Game::GameInstance)
+		{
 			Game::GameInstance->setAddress(0);
+			Game::GameInstance->ClearQueue();
+		}
+		{
+			std::unique_lock<std::shared_mutex> qLock(queue_mutex);
+			queuedActors.clear();
+		}
+		for (auto& pair : Instances::PlayerList)
+		{
+			if (pair.second)
+			{
+				pair.second->setAddress(0);
+				if (pair.second->Status && pair.second->Status->isAddressSet())
+					pair.second->Status->set(0, __FUNCTION__);
+			}
+		}
 	}
 
 	std::vector<std::string> BombChoices = {"CustomRemoteBomb", "CustomRemoteBomb2", "CustomRemoteBombCube", "CustomRemoteBombCube2"};
