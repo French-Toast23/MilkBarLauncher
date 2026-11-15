@@ -167,16 +167,27 @@ void queueActor(std::string actorName, float Position[3])
 	Logging::LoggerService::LogInformation("Queued actor '" + actorName + "' at (" + std::to_string(Position[0]) + ", " + std::to_string(Position[1]) + ", " + std::to_string(Position[2]) + "). Queue size: " + std::to_string(queuedActors.size()), __FUNCTION__);
 }
 
+static inline bool IsActorManagerReady(uint32_t f_r3, uint64_t baseAddr)
+{
+	if (f_r3 < 0x10000000 || f_r3 >= 0x40000000) return false;
+	uint32_t sub = (uint32_t)Memory::read_bigEndian4Bytes(baseAddr + f_r3 + 0x80);
+	if (sub < 0x10000000 || sub >= 0x40000000) return false;
+	uint32_t stageFactory = (uint32_t)Memory::read_bigEndian4Bytes(baseAddr + sub + 0x0C);
+	if (stageFactory < 0x10000000 || stageFactory >= 0x40000000) return false;
+	uint32_t vtable = (uint32_t)Memory::read_bigEndian4Bytes(baseAddr + stageFactory + 0x84);
+	if (vtable < 0x02000000 || vtable >= 0x05000000) return false;
+	return true;
+}
+
 void setupActor(PPCInterpreter_t* hCPU, TransferableData& trnsData, InstanceData& instData, uint32_t startRingBuffer, uint32_t endRingBuffer, uint64_t baseAddress) {
 	if (Main::s_LocalLinkAddr == 0 || !Game::GameInstance || Game::GameInstance->baseAddr == 0)
 		return;
 
-	if (!Memory::IsStageReady())
+	if (!Memory::IsStageReady() || !IsActorManagerReady(trnsData.f_r3, baseAddress))
 	{
 		trnsData.f_r3 = 0;
 		trnsData.interceptRegisters = true;
 		s_hasCachedActorStorage = false;
-		queuedActors.clear();
 		return;
 	}
 
@@ -433,6 +444,12 @@ void ProcessActorSpawnsInWeather(PPCInterpreter_t* hCPU, uint32_t mapAddr)
 				trnsData.interceptRegisters = true;
 				memInstance->memory_writeMemoryBE(s_startTrnsDataGuestAddr, trnsData, Main::baseAddr);
 			}
+			data_mutex.unlock();
+			return;
+		}
+
+		if (!IsActorManagerReady(trnsData.f_r3, Main::baseAddr))
+		{
 			data_mutex.unlock();
 			return;
 		}

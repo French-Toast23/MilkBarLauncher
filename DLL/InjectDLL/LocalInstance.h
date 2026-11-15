@@ -280,8 +280,13 @@ namespace MemoryAccess
 			uint64_t animAddr = Memory::ReadPointers(this->baseAddr, offsets, true);
 			if (animAddr >= 30000)
 			{
-				int anim = Memory::read_bigEndian4Bytes(animAddr + 0x10, "getAnimation");
-				return anim;
+				MEMORY_BASIC_INFORMATION mbi{ 0 };
+				if (VirtualQuery((LPCVOID)(animAddr + 0x10), &mbi, sizeof(mbi)) &&
+					(mbi.State & MEM_COMMIT) && !(mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
+				{
+					int anim = Memory::read_bigEndian4Bytes(animAddr + 0x10, "getAnimation");
+					return anim;
+				}
 			}
 			return 0;
 		}
@@ -779,19 +784,22 @@ namespace MemoryAccess
 			static Vec3f s_lastLocalPos = { 0, 0, 0 };
 			static bool s_hasLastLocalPos = false;
 
-			if (s_hasLastLocalPos && (s_lastLocalPos.x() != 0 || s_lastLocalPos.y() != 0 || s_lastLocalPos.z() != 0))
+			if (currentPos.x() != 0.0f || currentPos.y() != 0.0f || currentPos.z() != 0.0f)
 			{
-				float dx = currentPos.x() - s_lastLocalPos.x();
-				float dy = currentPos.y() - s_lastLocalPos.y();
-				float dz = currentPos.z() - s_lastLocalPos.z();
-				float distSq = dx * dx + dy * dy + dz * dz;
-				if (distSq > 10000.0f) // > 100 units displacement (teleport)
+				if (s_hasLastLocalPos && (s_lastLocalPos.x() != 0.0f || s_lastLocalPos.y() != 0.0f || s_lastLocalPos.z() != 0.0f))
 				{
-					Main::OnLocalTeleport();
+					float dx = currentPos.x() - s_lastLocalPos.x();
+					float dy = currentPos.y() - s_lastLocalPos.y();
+					float dz = currentPos.z() - s_lastLocalPos.z();
+					float distSq = dx * dx + dy * dy + dz * dz;
+					if (distSq > 10000.0f) // > 100 units displacement (teleport)
+					{
+						Main::OnLocalTeleport();
+					}
 				}
+				s_lastLocalPos = currentPos;
+				s_hasLastLocalPos = true;
 			}
-			s_lastLocalPos = currentPos;
-			s_hasLastLocalPos = true;
 
 			return result;
 		}

@@ -263,17 +263,14 @@ uint64_t Memory::FindLocalLinkActor()
     return 0;
 }
 
+namespace Main {
+    extern uint64_t s_LocalLinkAddr;
+}
+
 bool Memory::IsStageReady()
 {
+    if (Main::s_LocalLinkAddr == 0) return false;
     uint64_t base = getBaseAddress();
     if (base == 0) return false;
-    uint32_t manager = (uint32_t)read_bigEndian4Bytes(base + 0x1047c244, "IsStageReady");
-    if (manager < 0x10000000 || manager >= 0x40000000) return false;
-    uint32_t subsystem = (uint32_t)read_bigEndian4Bytes(base + manager + 0x80, "IsStageReady");
-    if (subsystem < 0x10000000 || subsystem >= 0x40000000) return false;
-    uint32_t stageFactory = (uint32_t)read_bigEndian4Bytes(base + subsystem + 0x0C, "IsStageReady");
-    if (stageFactory < 0x10000000 || stageFactory >= 0x40000000) return false;
-    uint32_t vtable = (uint32_t)read_bigEndian4Bytes(base + stageFactory + 0x84, "IsStageReady");
-    if (vtable < 0x02000000 || vtable >= 0x05000000) return false;
     return true;
 }
