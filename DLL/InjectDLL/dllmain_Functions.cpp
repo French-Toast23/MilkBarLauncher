@@ -1717,8 +1717,12 @@ void Main::mainServerLoop()
             Game::GameInstance->Teleport(serverResponse->TeleportData->Destination);
 
         //TODO: Add set for world dto
-        if(!Game::GameInstance->IsGamePaused && Game::GameInstance->Location->LastKnown.Map != "CDungeon")
+        if (!Game::GameInstance->IsGamePaused &&
+            (!Game::GameInstance->Location || Game::GameInstance->Location->LastKnown.Map != "CDungeon") &&
+            Game::GameInstance->World && serverResponse->WorldData)
+        {
             Game::GameInstance->World->set(serverResponse->WorldData);
+        }
 
         // Death swap
 

@@ -1033,6 +1033,7 @@ void timemgr_OnInit(PPCInterpreter_t* hCPU)
 
 	Game::GameInstance->World->ReadableTime = new BigEndian<float>(hCPU->gpr[3] + 0x98 + Main::baseAddr, __FUNCTION__);
 	Game::GameInstance->World->WritableTime = new BigEndian<float>(hCPU->gpr[3] + 0xA0 + Main::baseAddr, __FUNCTION__);
+	Logging::LoggerService::LogInformation("timemgr_OnInit: Bound ReadableTime and WritableTime.");
 }
 
 void dummySelfTestFn(PPCInterpreter_t* hCPU)

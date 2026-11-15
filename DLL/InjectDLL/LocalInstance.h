@@ -14,23 +14,26 @@ namespace MemoryAccess
 	class WorldObj
 	{
 	public:
-		BigEndian<int>* Day;
-		BigEndian<float>* WritableTime;
-		BigEndian<float>* ReadableTime;
+		BigEndian<int>* Day = nullptr;
+		BigEndian<float>* WritableTime = nullptr;
+		BigEndian<float>* ReadableTime = nullptr;
 		int Weather = 0;
 		int LocalWeather = 0;
 
 		void set(DTO::WorldDTO* input)
 		{
+			if (!input) return;
 			Mutex.lock();
 
-			int currentDay = this->Day->get(__FUNCTION__);
-			float currentTime = this->ReadableTime->get(__FUNCTION__);
+			int currentDay = (this->Day && this->Day->isAddressSet()) ? this->Day->get(__FUNCTION__) : 0;
+			float currentTime = (this->ReadableTime && this->ReadableTime->isAddressSet()) ? this->ReadableTime->get(__FUNCTION__) : 0.0f;
 
-			if (currentTime < 350 && (input->Day > currentDay || currentDay - input->Day > 1 || (currentDay == input->Day && input->Time - currentTime > 2)))
+			if (currentTime < 350.0f && (input->Day > currentDay || currentDay - input->Day > 1 || (currentDay == input->Day && input->Time - currentTime > 2.0f)))
 			{
-				this->Day->set(input->Day, __FUNCTION__);
-				this->WritableTime->set(input->Time, __FUNCTION__);
+				if (this->Day && this->Day->isAddressSet())
+					this->Day->set(input->Day, __FUNCTION__);
+				if (this->WritableTime && this->WritableTime->isAddressSet())
+					this->WritableTime->set(input->Time, __FUNCTION__);
 				Sleep(100);
 			}
 
@@ -43,13 +46,11 @@ namespace MemoryAccess
 			Mutex.lock();
 			DTO::WorldDTO* result = new DTO::WorldDTO();
 
-			result->Day = this->Day->get(__FUNCTION__);
-
-			result->Time = this->ReadableTime->get(__FUNCTION__);
-
+			result->Day = (this->Day && this->Day->isAddressSet()) ? this->Day->get(__FUNCTION__) : 0;
+			result->Time = (this->ReadableTime && this->ReadableTime->isAddressSet()) ? this->ReadableTime->get(__FUNCTION__) : 0.0f;
 			result->Weather = this->LocalWeather;
-			Mutex.unlock();
 
+			Mutex.unlock();
 			return result;
 		}
 		
@@ -74,21 +75,21 @@ namespace MemoryAccess
 
 		/* Global flags - Flags used in events like GameRomCamera */
 		struct PropHunt_Flags {
-			LittleEndian<bool>* HidingPhase;
-			LittleEndian<bool>* RunningPhase;
-			LittleEndian<bool>* Countdown;
-			LittleEndian<bool>* HidePlayer;
-			LittleEndian<bool>* ShowPlayer;
-			LittleEndian<bool>* StopMusic;
+			LittleEndian<bool>* HidingPhase = nullptr;
+			LittleEndian<bool>* RunningPhase = nullptr;
+			LittleEndian<bool>* Countdown = nullptr;
+			LittleEndian<bool>* HidePlayer = nullptr;
+			LittleEndian<bool>* ShowPlayer = nullptr;
+			LittleEndian<bool>* StopMusic = nullptr;
 		};
 
-		BigEndian<int>* Health;
-		BigEndian<int>* Defense;
-		BigEndian<float>* AtkUp;
-		LittleEndian<bool>* IsEquipped;
-		LocationAccess* Location;
-		EquippedItems* Equipment;
-		BigEndian<int>* Animation;
+		BigEndian<int>* Health = nullptr;
+		BigEndian<int>* Defense = nullptr;
+		BigEndian<float>* AtkUp = nullptr;
+		LittleEndian<bool>* IsEquipped = nullptr;
+		LocationAccess* Location = nullptr;
+		EquippedItems* Equipment = nullptr;
+		BigEndian<int>* Animation = nullptr;
 		BombAccess* Bomb = new BombAccess();
 		BombAccess* Bomb2 = new BombAccess();
 		BombAccess* BombCube = new BombAccess();
@@ -100,7 +101,7 @@ namespace MemoryAccess
 
 		WorldObj* World = new WorldObj();
 
-		LittleEndian<bool>* NotPaused;
+		LittleEndian<bool>* NotPaused = nullptr;
 
 		DWORD LastQuestUpdate = 0;
 
@@ -702,17 +703,17 @@ namespace MemoryAccess
 		{
 			DTO::ClientDTO* result = new DTO::ClientDTO();
 
-			int LastHealth = this->Health->LastKnown;
+			int LastHealth = (this->Health && this->Health->isAddressSet()) ? this->Health->LastKnown : 0;
 
-			result->WorldData = this->World->get();
+			result->WorldData = this->World ? this->World->get() : new DTO::WorldDTO();
 			result->PlayerData = get_characterData();
 			if (ServicesStarted)
 			{
-				result->EnemyData = EnemyService->UpdateHealth(); //TODO: Implement enemy and quest sync
+				result->EnemyData = EnemyService ? EnemyService->UpdateHealth() : new DTO::EnemyDTO(); //TODO: Implement enemy and quest sync
 
 				if (float(LastQuestUpdate - GetTickCount()) > 5000)
 				{
-					result->QuestData = QuestService->UpdateQuests();
+					result->QuestData = QuestService ? QuestService->UpdateQuests() : new DTO::QuestDTO();
 					LastQuestUpdate = GetTickCount();
 				}
 				else
@@ -727,7 +728,7 @@ namespace MemoryAccess
 				result->QuestData = new DTO::QuestDTO();
 			}
 
-			if(this->Health->LastKnown != LastHealth)
+			if (this->Health && this->Health->isAddressSet() && this->Health->LastKnown != LastHealth)
 				LastHealthUpdate = GetTickCount();
 
 			return result;

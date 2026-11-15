@@ -32,14 +32,14 @@ namespace MemoryAccess
 		CharacterLocation* Location = new CharacterLocation();
 		EquipmentAccess* Equipment = new EquipmentAccess();
 		BumiiAccess* Bumii = new BumiiAccess();
-		LittleEndian<bool>* Exists;
-		LittleEndian<bool>* DispName;
-		BigEndian<int>* Status;
-		uint64_t NameAddr;
-		uint64_t AnimAddr;
-		uint64_t HoldAddr;
-		Vec3fBE* MapPin;
-		uint64_t AttackAddr;
+		LittleEndian<bool>* Exists = nullptr;
+		LittleEndian<bool>* DispName = nullptr;
+		BigEndian<int>* Status = nullptr;
+		uint64_t NameAddr = 0;
+		uint64_t AnimAddr = 0;
+		uint64_t HoldAddr = 0;
+		Vec3fBE* MapPin = nullptr;
+		uint64_t AttackAddr = 0;
 		BombAccess* Bomb = new BombAccess();
 		BombAccess* Bomb2 = new BombAccess();
 		BombAccess* BombCube = new BombAccess();
@@ -47,7 +47,7 @@ namespace MemoryAccess
 
 		bool HideFromMap = false;
 
-		MemoryAccess::LocalInstance* GameInstance;
+		MemoryAccess::LocalInstance* GameInstance = nullptr;
 
 		std::thread pThread;
 		bool RunThread = false;
@@ -306,8 +306,16 @@ namespace MemoryAccess
 			LastUpdatedPosition = newPosition;
 		}
 
+		~Player()
+		{
+			Disconnect();
+		}
+
 		void Connect()
 		{
+			if (connected)
+				return;
+
 			//this->Delete->set(false, __FUNCTION__);
 			if (this->Status && this->Status->isAddressSet())
 				this->Status->set(0, __FUNCTION__);
@@ -318,6 +326,8 @@ namespace MemoryAccess
 				Memory::MessagerService::AddMessage("Player " + Name + " joined.");
 			}
 			this->RunThread = true;
+			if (pThread.joinable())
+				pThread.join();
 			pThread = std::thread(&Player::PThread, this);
 		}
 
@@ -337,7 +347,8 @@ namespace MemoryAccess
 				this->Status->set(1, __FUNCTION__);
 			Mutex.unlock();
 			this->RunThread = false;
-			pThread.join();
+			if (pThread.joinable())
+				pThread.join();
 		}
 
 		void UpdateName(bool DispNames)
