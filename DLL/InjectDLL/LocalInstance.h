@@ -6,6 +6,7 @@ using namespace DataTypes;
 
 namespace Main {
 	extern uint64_t s_LocalLinkAddr;
+	void OnLocalTeleport();
 }
 
 namespace MemoryAccess
@@ -157,9 +158,9 @@ namespace MemoryAccess
 
 		void RequestCreate(int playerNumber, Vec3f pos = Vec3f(0, 0, 0))
 		{
-			if (this->baseAddr == 0 || Main::s_LocalLinkAddr == 0)
+			if (this->baseAddr == 0 || Main::s_LocalLinkAddr == 0 || !Memory::IsStageReady())
 			{
-				Logging::LoggerService::LogWarning("Create request failed: Local Link is not active in world.");
+				Logging::LoggerService::LogWarning("Create request failed: Local Link or Stage is not active in world.");
 				return;
 			}
 
@@ -197,7 +198,7 @@ namespace MemoryAccess
 			if (!queue_mutex || !queuePlayer)
 				return;
 
-			if (this->baseAddr == 0 || Main::s_LocalLinkAddr == 0 || IsGamePaused)
+			if (this->baseAddr == 0 || Main::s_LocalLinkAddr == 0 || IsGamePaused || !Memory::IsStageReady())
 				return;
 
 			queue_mutex->lock();
@@ -269,6 +270,19 @@ namespace MemoryAccess
 				PlayerQueue.clear();
 				queue_mutex->unlock();
 			}
+		}
+
+		int getAnimation()
+		{
+			if (this->baseAddr == 0) return 0;
+			std::vector<int> offsets = { 0x448, 0x4C, 0x10, 0x19C, 0x38, 0xA0, 0x10, -0x5C };
+			uint64_t animAddr = Memory::ReadPointers(this->baseAddr, offsets, true);
+			if (animAddr >= 30000)
+			{
+				int anim = Memory::read_bigEndian4Bytes(animAddr + 0x10, "getAnimation");
+				return anim;
+			}
+			return 0;
 		}
 
 		bool resolveAnimation()
@@ -748,7 +762,7 @@ namespace MemoryAccess
 			result->Rotation2 = this->Rotation2->get(__FUNCTION__);
 			result->Rotation3 = this->Rotation3->get(__FUNCTION__);
 			result->Rotation4 = this->Rotation4->get(__FUNCTION__);
-			result->Animation = (this->Animation && this->Animation->isAddressSet()) ? this->Animation->get(__FUNCTION__) : 0;
+			result->Animation = this->getAnimation();
 			result->Health = (this->Health && this->Health->isAddressSet()) ? this->Health->get(__FUNCTION__) : 0;
 			result->AtkUp = (this->AtkUp && this->AtkUp->isAddressSet()) ? this->AtkUp->get(__FUNCTION__) : 0;
 			result->IsEquipped = (this->IsEquipped && this->IsEquipped->isAddressSet()) ? this->IsEquipped->get(__FUNCTION__) : false;
@@ -758,6 +772,25 @@ namespace MemoryAccess
 			result->Bomb2 = this->Bomb2->get(__FUNCTION__);
 			result->BombCube = this->BombCube->get(__FUNCTION__);
 			result->BombCube2 = this->BombCube2->get(__FUNCTION__);
+
+			// Fast-travel / teleport detection
+			Vec3f currentPos = result->Position;
+			static Vec3f s_lastLocalPos = { 0, 0, 0 };
+			static bool s_hasLastLocalPos = false;
+
+			if (s_hasLastLocalPos && (s_lastLocalPos.x() != 0 || s_lastLocalPos.y() != 0 || s_lastLocalPos.z() != 0))
+			{
+				float dx = currentPos.x() - s_lastLocalPos.x();
+				float dy = currentPos.y() - s_lastLocalPos.y();
+				float dz = currentPos.z() - s_lastLocalPos.z();
+				float distSq = dx * dx + dy * dy + dz * dz;
+				if (distSq > 10000.0f) // > 100 units displacement (teleport)
+				{
+					Main::OnLocalTeleport();
+				}
+			}
+			s_lastLocalPos = currentPos;
+			s_hasLastLocalPos = true;
 
 			return result;
 		}

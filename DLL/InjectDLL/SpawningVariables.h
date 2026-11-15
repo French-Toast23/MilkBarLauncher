@@ -171,6 +171,15 @@ void setupActor(PPCInterpreter_t* hCPU, TransferableData& trnsData, InstanceData
 	if (Main::s_LocalLinkAddr == 0 || !Game::GameInstance || Game::GameInstance->baseAddr == 0)
 		return;
 
+	if (!Memory::IsStageReady())
+	{
+		trnsData.f_r3 = 0;
+		trnsData.interceptRegisters = true;
+		s_hasCachedActorStorage = false;
+		queuedActors.clear();
+		return;
+	}
+
 	if (queuedActors.empty())
 		return;
 
@@ -300,6 +309,15 @@ void mainFn(PPCInterpreter_t* hCPU, uint32_t startTrnsData, uint32_t startRingBu
 	if (Main::s_LocalLinkAddr == 0 || !Game::GameInstance || Game::GameInstance->baseAddr == 0)
 		return;
 
+	if (!Memory::IsStageReady())
+	{
+		std::unique_lock<std::shared_mutex> qLock(queue_mutex, std::try_to_lock);
+		if (qLock.owns_lock())
+			queuedActors.clear();
+		s_hasCachedActorStorage = false;
+		return;
+	}
+
 	s_startTrnsDataGuestAddr = startTrnsData;
 	s_storageStartGuestAddr = startRingBuffer;
 	s_storageEndGuestAddr = endRingBuffer;
@@ -367,6 +385,15 @@ void ProcessActorSpawnsInWeather(PPCInterpreter_t* hCPU, uint32_t mapAddr)
 	if (Main::s_LocalLinkAddr == 0 || !Game::GameInstance || Game::GameInstance->baseAddr == 0)
 		return;
 
+	if (!Memory::IsStageReady())
+	{
+		std::unique_lock<std::shared_mutex> qLock(queue_mutex, std::try_to_lock);
+		if (qLock.owns_lock())
+			queuedActors.clear();
+		s_hasCachedActorStorage = false;
+		return;
+	}
+
 	if (s_startTrnsDataGuestAddr == 0)
 	{
 		s_startTrnsDataGuestAddr = 0x01808020;
@@ -388,6 +415,16 @@ void ProcessActorSpawnsInWeather(PPCInterpreter_t* hCPU, uint32_t mapAddr)
 		data_mutex.lock();
 		TransferableData trnsData;
 		memInstance->memory_readMemoryBE(s_startTrnsDataGuestAddr, &trnsData, Main::baseAddr);
+
+		if (!Memory::IsStageReady())
+		{
+			trnsData.f_r3 = 0;
+			trnsData.interceptRegisters = true;
+			s_hasCachedActorStorage = false;
+			queuedActors.clear();
+			data_mutex.unlock();
+			return;
+		}
 
 		if (trnsData.f_r3 == 0 || (trnsData.f_r7 == 0 && !s_hasCachedActorStorage))
 		{
@@ -674,6 +711,31 @@ void OnActorCreate(PPCInterpreter_t* hCPU)
 	}
 }
 
+namespace Main {
+	void OnLocalTeleport()
+	{
+		Logging::LoggerService::LogInformation("Local Link fast-travel detected! Flushing actor queues.", __FUNCTION__);
+		if (Game::GameInstance)
+		{
+			Game::GameInstance->ClearQueue();
+		}
+		{
+			std::unique_lock<std::shared_mutex> qLock(queue_mutex);
+			queuedActors.clear();
+		}
+		s_hasCachedActorStorage = false;
+		for (auto& pair : Instances::PlayerList)
+		{
+			if (pair.second)
+			{
+				pair.second->setAddress(0);
+				if (pair.second->Status && pair.second->Status->isAddressSet())
+					pair.second->Status->set(0, __FUNCTION__);
+			}
+		}
+	}
+}
+
 void OnActorErase(PPCInterpreter_t* hCPU)
 {
 	if (!hCPU) return;
@@ -703,6 +765,7 @@ void OnActorErase(PPCInterpreter_t* hCPU)
 			std::unique_lock<std::shared_mutex> qLock(queue_mutex);
 			queuedActors.clear();
 		}
+		s_hasCachedActorStorage = false;
 		for (auto& pair : Instances::PlayerList)
 		{
 			if (pair.second)

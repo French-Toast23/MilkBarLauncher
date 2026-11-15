@@ -9,8 +9,15 @@ namespace DataTypes
 	public:
 		bool Changed = false;
 		bool SetupFailed = false;
+		int PlayerNumber = 1;
 		CharacterEquipment* LastKnown = new CharacterEquipment();
 		std::string lastBase = "Jugador1ModelNameLongForASpecificReasonHead";
+
+		void SetPlayerNumber(int num)
+		{
+			PlayerNumber = num;
+			lastBase = "Jugador" + std::to_string(num) + "ModelNameLongForASpecificReasonHead";
+		}
 
 		bool Compare(CharacterEquipment newEquipment)
 		{
@@ -95,14 +102,20 @@ namespace DataTypes
 			Mutex.unlock();
 		}
 
-		void SetArmor()
+		void SetArmor(uint64_t actorBaseAddr = 0)
 		{
-			std::string BASE_FOLDER = "Jugador1ModelNameLongForASpecificReason";
-			std::string BASE_DEFAULT = "Jugador1ModelNameLongForASpecificReasonHead";
-			std::string CHEST_DEFAULT = "Jugador1ModelNameLongForASpecificReasonChest";
-			std::string UPPER_DEFAULT = "Jugador1ModelNameLongForASpecificReasonHelmet";
-			std::string LOWER_DEFAULT = "Jugador1ModelNameLongForASpecificReasonLower";
-			std::string HEAD_DEFAULT = "Jugador1ModelNameLongForASpecificReasonUpper";
+			if (ArmorAddrs.Face == 0 && actorBaseAddr >= 30000)
+			{
+				FindArmorAddr(actorBaseAddr);
+			}
+
+			std::string pStr = std::to_string(PlayerNumber);
+			std::string BASE_FOLDER = "Jugador" + pStr + "ModelNameLongForASpecificReason";
+			std::string BASE_DEFAULT = "Jugador" + pStr + "ModelNameLongForASpecificReasonHead";
+			std::string CHEST_DEFAULT = "Jugador" + pStr + "ModelNameLongForASpecificReasonChest";
+			std::string UPPER_DEFAULT = "Jugador" + pStr + "ModelNameLongForASpecificReasonHelmet";
+			std::string LOWER_DEFAULT = "Jugador" + pStr + "ModelNameLongForASpecificReasonLower";
+			std::string HEAD_DEFAULT = "Jugador" + pStr + "ModelNameLongForASpecificReasonUpper";
 
 			std::string UPPER_DEFAULT_ARMOR = "MP_Armor_Default_Upper";
 			std::string LOWER_DEFAULT_ARMOR = "MP_Armor_Default_Lower";
@@ -120,15 +133,14 @@ namespace DataTypes
 			if (HeadToWrite == "MP_Armor_180_Head" || HeadToWrite == "MP_Armor_160_Head" || HeadToWrite == "MP_Armor_171_Head")
 				BaseToWrite = "EmptyModel";
 
-			if(ArmorAddrs.Face != 0)
+			if (ArmorAddrs.Face != 0)
 			{
 				try {
 					std::string HeadStr = Memory::read_string(ArmorAddrs.Face, BASE_DEFAULT.size() + 2, __FUNCTION__);
 					if (HeadStr != lastBase && HeadStr != "EmptyModel")
 					{
 						ArmorAddrs.Face = 0;
-						Logging::LoggerService::LogInformation("Failed to set up armor. Trying again...", __FUNCTION__);
-						this->SetupFailed = true;
+						Logging::LoggerService::LogInformation("Armor address mismatch, resetting Face addr.", __FUNCTION__);
 						return;
 					}
 
@@ -146,14 +158,12 @@ namespace DataTypes
 				}
 				catch (...)
 				{
-					this->SetupFailed = true;
 					Logging::LoggerService::LogInformation("Failed to setup armor.", __FUNCTION__);
 				}
 			}
 			else 
 			{
 				Logging::LoggerService::LogInformation("Couldn't find armor address.", __FUNCTION__);
-				this->SetupFailed = true;
 			}
 		}
 

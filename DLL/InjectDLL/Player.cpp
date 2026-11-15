@@ -26,7 +26,7 @@ void Player::PThread()
 				continue;
 			}
 
-			if (GameInstance == nullptr || GameInstance->baseAddr == 0 || Main::s_LocalLinkAddr == 0)
+			if (GameInstance == nullptr || GameInstance->baseAddr == 0 || Main::s_LocalLinkAddr == 0 || !Memory::IsStageReady())
 			{
 				Sleep(100);
 				continue;
@@ -51,22 +51,17 @@ void Player::PThread()
 
 			bool exists = this->baseAddr != 0;
 
-			if (this->Equipment->Changed)
+			if (this->Equipment->Changed && exists)
 			{
-				action = ActCreate;
-				reasonToSpawn = "Equipment changed. ";
+				this->Equipment->SetArmor(this->baseAddr);
+				this->Equipment->SetWeapons(this->baseAddr);
+				this->Equipment->Changed = false;
 			}
 
-			if (this->Equipment->SetupFailed)
+			if (failedToDelete && shouldExist)
 			{
 				action = ActCreate;
-				reasonToSpawn += "Failed to setup armor. ";
-			}
-
-			if (failedToDelete)
-			{
-				action = ActCreate;
-				reasonToSpawn += "Failed to delete. ";
+				reasonToSpawn = "Failed to delete. ";
 				failedToDelete = false;
 			}
 			
@@ -104,7 +99,7 @@ void Player::PThread()
 					continue;
 				}
 
-				if (GameInstance->baseAddr == 0 || Main::s_LocalLinkAddr == 0 || GameInstance->IsPaused())
+				if (GameInstance->baseAddr == 0 || Main::s_LocalLinkAddr == 0 || GameInstance->IsPaused() || !Memory::IsStageReady())
 				{
 					LastSpawn = GetTickCount();
 					Logging::LoggerService::LogWarning("Create request failed: World is not loaded or game is paused.");
@@ -151,7 +146,7 @@ void Player::PThread()
 				if (this->Status && this->Status->isAddressSet())
 					this->Status->set(0, __FUNCTION__);
 
-				if (GameInstance->baseAddr == 0 || Main::s_LocalLinkAddr == 0 || GameInstance->IsPaused())
+				if (GameInstance->baseAddr == 0 || Main::s_LocalLinkAddr == 0 || GameInstance->IsPaused() || !Memory::IsStageReady())
 				{
 					LastSpawn = GetTickCount();
 					Logging::LoggerService::LogWarning("Create request failed: World is not loaded or game is paused.");
@@ -162,7 +157,7 @@ void Player::PThread()
 				{
 					Logging::LoggerService::LogDebug("Setting up " + std::to_string(this->PlayerNumber) + " armor...", __FUNCTION__);
 					//this->Bumii->WriteMiiData(1033785125, 598924800);
-					this->Equipment->SetArmor();
+					this->Equipment->SetArmor(this->baseAddr);
 				}
 				else if (this->Model.ModelType == 1)
 				{

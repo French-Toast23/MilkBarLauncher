@@ -63,6 +63,7 @@ namespace MemoryAccess
 		{
 			GameInstance = instance;
 			PlayerNumber = playerNumber;
+			Equipment->SetPlayerNumber(playerNumber);
 
 			Exists = new LittleEndian<bool>(actorFlags.ExistsFlag, __FUNCTION__);
 			DispName = new LittleEndian<bool>(actorFlags.DispNameFlag, __FUNCTION__);
@@ -179,17 +180,19 @@ namespace MemoryAccess
 				else
 				{
 					this->Status->set(0, __FUNCTION__);
-					if (AnimAddr >= 30000 && PlayerData->Animation != 0)
+					if (AnimAddr >= 30000)
 					{
-						if (PlayerData->Animation != LastAnimation)
+						uint32_t animVal = PlayerData->Animation != 0 ? UINT32(PlayerData->Animation) : 789467239;
+						if (animVal != UINT32(LastAnimation))
 						{
-							Memory::write_string(AnimAddr, "Anim_" + std::to_string(UINT32(PlayerData->Animation)), DEFAULT_ANIM.size(), __FUNCTION__);
+							Memory::write_string(AnimAddr, "Anim_" + std::to_string(animVal), DEFAULT_ANIM.size(), __FUNCTION__);
 						}
 					}
 				}
 			}
 
-			if (PlayerData->Animation != LastAnimation && PlayerData->Animation != 0)
+			uint32_t effectiveAnim = PlayerData->Animation != 0 ? UINT32(PlayerData->Animation) : 789467239;
+			if (effectiveAnim != UINT32(LastAnimation))
 			{
 				static int s_loggedAnimCount = 0;
 				if (s_loggedAnimCount < 50)
@@ -197,13 +200,13 @@ namespace MemoryAccess
 					s_loggedAnimCount++;
 					std::stringstream ss;
 					ss << "Player " << (int)PlayerNumber << " animation changed: "
-					   << LastAnimation << " -> " << PlayerData->Animation
-					   << " (Anim_" << std::to_string(UINT32(PlayerData->Animation)) << ")";
+					   << LastAnimation << " -> " << effectiveAnim
+					   << " (Anim_" << std::to_string(effectiveAnim) << ")";
 					Logging::LoggerService::LogInformation(ss.str());
 				}
 			}
 			
-			LastAnimation = PlayerData->Animation;
+			LastAnimation = effectiveAnim;
 
 			if (HoldAddr >= 30000)
 				Memory::write_string(HoldAddr, PlayerData->IsEquipped ? "Hold" : "Equip", 6, __FUNCTION__);

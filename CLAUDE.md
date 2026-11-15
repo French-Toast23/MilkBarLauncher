@@ -274,14 +274,14 @@ Copy-Item "Build\Resources\InjectDLL.dll" "WPF .NET 6\Breath of the Wild Multipl
 ---
 
 ### N. Teleportation / Fast-Travel Crash & Remote Player T-Pose Fix
-- **Problem 1 (Fast-Travel Crash)**: Teleporting triggered an access violation (`0xc0000005`) at PPC `0x03948078` (`movbe eax, dword ptr [r13 + rdx + 0x84]` with `rdx = 0`). During fast-travel, BotW erased local Link and other actors while unloading scene memory. `Player::PThread()` immediately observed `!exists && shouldExist`, queued actor creation, and `createActor_` was dispatched into a deallocated scene graph.
-- **Problem 2 (Remote Player T-Pose)**: The ActionSequence animation pointer chain (`Animation = new BigEndian<int>(this->baseAddr, { 0x448, 0x4C, 0x10, 0x19C, 0x38, 0xA0, 0x10, -0x5C }, 0x10)`) was queried only once at scan time before Link's AS controller was initialized. Because it failed initial lookup, `AddressSet` became `false` permanently. `get_characterData()` returned `0` on every frame, causing the receiving client to write `"Anim_0"`, falling back to the bind T-pose.
+- **Problem 1 (Fast-Travel Crash)**: Teleporting triggered an access violation (`0xc0000005`) at PPC `0x03948074` (`lwz r11, 0x84(r10)` where `r10 = 0x0`). During scene unload/reload transitions, the stage actor factory was NULL (`0x00000000`). Custom actor dispatch (`createActor_`) called during this transition crashed Cemu immediately with `FAST_FAIL_FATAL_APP_EXIT` / `0xc0000005`.
+- **Problem 2 (Actor Recreation Death Loop)**: In `Player.cpp` / `EquipmentAccess.h`, whenever armor addresses were resolving or `SetupFailed` was set, `action = ActCreate` was scheduled in an endless loop, deleting and recreating the player actor every few seconds even when the player should not exist or was mid-transition.
+- **Problem 3 (Remote Player T-Pose)**: The ActionSequence animation pointer chain (`0x448, 0x4C, 0x10, 0x19C, 0x38, 0xA0, 0x10, -0x5C`) changes dynamically as Link changes states. Caching the pointer address once locked in stale memory. Additionally, when `PlayerData->Animation == 0`, `Player.h` never initialized `AnimAddr`, leaving the fallback string `"Jugador1_animationthing"`, which caused BotW to fall back to the bind T-pose.
 - **Fix**:
-  1. **Strict World-State Lifecycle Gates**: Added guards `if (Main::s_LocalLinkAddr == 0 || !Game::GameInstance || Game::GameInstance->baseAddr == 0)` to `setupActor`, `mainFn`, and `ProcessActorSpawnsInWeather`.
-  2. **Scene Unload Cleanup**: In `OnActorErase`, when `GameROMPlayer` is erased, immediately clear `queuedActors`, clear `PlayerQueue`, and reset all remote player instances (`setAddress(0)`).
-  3. **PThread Gating**: In `Player::PThread()`, skip execution if local Link does not exist in the world (`s_LocalLinkAddr == 0`).
-  4. **Dynamic `resolveAnimation()`**: Added on-demand resolution in `LocalInstance::get_characterData()` (mirroring `resolvePosition()`). The ActionSequence pointer chain is resolved dynamically once memory is ready and re-resolved whenever Link teleports or respawns.
-  5. **Animation Transmission Safety**: `Player.h` ignores `0` animations (never writes `"Anim_0"`), writes string changes only on transition, and logs live animation changes.
+  1. **Stage Readiness Inspection (`Memory::IsStageReady()`)**: Reads `0x1047c244` (Actor System Manager) -> `+0x80` -> `+0x0C` (Stage Actor Factory) -> `+0x84` (VTable). If any pointer is NULL, below `0x10000000`, or the vtable is unmapped, `createActor_` dispatch is blocked, actor queues are flushed, and registers reset.
+  2. **Fast-Travel Jump Detection (`Main::OnLocalTeleport()`)**: Added frame displacement check in `get_characterData()`. When Link's displacement $> 100.0\text{ units}$ in one frame, actor queues are cleared and remote player addresses are reset to 0 to prevent lingering in deallocated scenes.
+  3. **Decoupled Equipment Updates**: In `Player::PThread()`, equipment changes call `SetArmor(this->baseAddr)` and `SetWeapons(this->baseAddr)` directly in-place without deleting or recreating the actor.
+  4. **Dynamic Animation Resolution (`getAnimation()`)**: Dereferences the active ActionSequence controller dynamically every frame. When `Animation == 0` (idle stance), `Player.h` writes `"Anim_789467239"` (`SetUp` idle stance) instead of leaving it uninitialized, ensuring remote players never default to T-pose.
 
 ---
 

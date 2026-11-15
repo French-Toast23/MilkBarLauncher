@@ -37,6 +37,7 @@ namespace Memory
     typedef void* (*memory_getBaseType)();
     uint64_t getBaseAddress();
     uint64_t FindLocalLinkActor();
+    bool IsStageReady();
 
     DWORD read_memory(uint64_t Addr, const char* caller = "");
     int swap_Endian(int number);
