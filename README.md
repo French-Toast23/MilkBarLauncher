@@ -59,7 +59,7 @@ see [CLAUDE.md](CLAUDE.md).
   - [cemu-project/Cemu](https://github.com/cemu-project/Cemu), emulator internals (HLE calls, graphic packs). MPL-2.0.
   - [NiceneNerd/UKMM](https://github.com/NiceneNerd/UKMM) (GPL-3.0) and [NiceneNerd/BCML](https://github.com/NiceneNerd/BCML)
     (no license file): how BotW mods are merged.
-  - KirbyMimi's *BotW couch co-op* graphic pack and *TotK online* mod: design ideas for remote players
+  - [KirbyMimi](https://discord.com/invite/vT5PVaQgks)'s *BotW couch co-op* graphic pack and *TotK online* mod: design ideas for remote players
     (puppet actors, interpolated movement, forwarding animation requests). Ideas only, no code used.
 - Tools used to build and verify the mod files (not shipped):
   - [zeldamods/oead](https://github.com/zeldamods/oead) (GPL-2.0): SARC, BYML, AAMP, Yaz0.
