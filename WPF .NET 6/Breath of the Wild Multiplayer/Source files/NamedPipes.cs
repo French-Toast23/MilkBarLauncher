@@ -13,9 +13,13 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
         public static Thread ListenThread;
         public static EventHandler<string> PipeReceived;
 
-        public static void StartServer()
+        /// <summary>
+        /// Opens the pipe for one Cemu. The name includes that Cemu's process ID (the DLL builds the same name
+        /// from GetCurrentProcessId), so several launchers running at once can't connect to each other's Cemu.
+        /// </summary>
+        public static void StartServer(int cemuProcessId)
         {
-            _server = new NamedPipeServerStream(@"languageConnectionPipe", PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances, PipeTransmissionMode.Message);
+            _server = new NamedPipeServerStream($"languageConnectionPipe_{cemuProcessId}", PipeDirection.InOut, 1, PipeTransmissionMode.Message);
             _server.WaitForConnectionWithTimeout(10);
             Online = true;
         }

@@ -17,7 +17,7 @@
 * **Emulator**: **Cemu 2.6** (x64 native, wxWidgets GUI, PPC JIT Recompiler)
 * **Core Components**:
   1. **Launcher (`Breath of the Wild Multiplayer.exe`)**: WPF desktop app on .NET 8 (`WPF .NET 6/Breath of the Wild Multiplayer/`). Handles Cemu process management, graphic pack verification, Yaz0 decompression, SARC packing, and GUI settings.
-  2. **Injected Payload (`InjectDLL.dll`)**: Native C++17 x64 DLL (`DLL/InjectDLL/`). Injected into `Cemu.exe` on startup. Communicates with launcher via Named Pipes (`\\.\pipe\BOTW_MilkBar_Pipe_<PID>`).
+  2. **Injected Payload (`InjectDLL.dll`)**: Native C++17 x64 DLL (`DLL/InjectDLL/`). Injected into `Cemu.exe` on startup. Communicates with its launcher via a named pipe, `\\.\pipe\languageConnectionPipe_<Cemu PID>` (per Cemu process since 17 Nov 2026; it used to be one shared name, which let several launchers cross-connect).
   3. **Multiplayer Server (`BOTWM.Server.dll`)**: C# TCP (default port `5050`) / UDP server handling player coordination, packet sync, and game states.
   4. **Graphic Pack (`BreathOfTheWild_Multiplayer`)**: Located at `%APPDATA%\Cemu\graphicPacks\BreathOfTheWild_Multiplayer\`. Houses PPC assembly patches (`patch_*.asm`), 32 custom `Jugador` actors (`content/Actor/Pack/Jugador*.sbactorpack`), and metadata (`rules.txt`, `content/Actor/ActorInfo.product.sbyml`, `content/System/Resource/ResourceSizeTable.product.srsizetable`).
 

@@ -7,11 +7,14 @@ void namedPipeClass::createServer()
 	bool pipeOpened = false;
 	int tries = 0;
 	HANDLE hPipeTemp;
-	Logging::LoggerService::LogDebug("Connecting to named pipe");
+	// One pipe per Cemu process: the launcher that started this Cemu names its pipe after our PID. With a
+	// shared name, two launchers running at once made each Cemu connect to whichever pipe answered first.
+	std::string pipeName = "\\\\.\\pipe\\languageConnectionPipe_" + std::to_string(GetCurrentProcessId());
+	Logging::LoggerService::LogDebug("Connecting to named pipe " + pipeName);
 
 	while (!pipeOpened)
 	{
-		hPipeTemp = CreateFile("\\\\.\\pipe\\languageConnectionPipe", GENERIC_ALL, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+		hPipeTemp = CreateFileA(pipeName.c_str(), GENERIC_ALL, 0, nullptr, OPEN_EXISTING, 0, nullptr);
 
 		if (hPipeTemp == INVALID_HANDLE_VALUE)
 		{

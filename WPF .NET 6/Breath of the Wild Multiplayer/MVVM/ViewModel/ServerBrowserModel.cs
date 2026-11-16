@@ -76,6 +76,8 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
 
         public int lastSelected = -1;
 
+        private static bool s_autoConnectScheduled = false; // auto-connect once per launcher process
+
         // ---- Cemu selector (above Connect): which of the up to four Cemu installs this launcher starts
         public RelayCommand previousCemuClick { get; set; }
         public RelayCommand nextCemuClick { get; set; }
@@ -117,9 +119,14 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
             serverButtonClick = new RelayCommand(o => this.changeSelected(o));
             connectClick = new AsyncRelayCommand(o => this.connectWithPlayerSetup());
 
-            if (LaunchArgs.AutoConnect != null)
+            // ServerBrowserModel is created more than once (MainMenuModel and the view's own DataContext), and
+            // each instance used to start its own auto-connect: one extra player opened several Cemus.
+            if (LaunchArgs.AutoConnect != null && !s_autoConnectScheduled)
+            {
+                s_autoConnectScheduled = true;
                 System.Windows.Application.Current?.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle,
                     new Action(() => new AsyncRelayCommand(_ => this.autoConnect()).Execute(null)));
+            }
             refreshClick = new RelayCommand(o =>
             {
                 foreach (var server in this._serversToShow)
@@ -436,7 +443,8 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
 
             try
             {
-                await Task.Run(NamedPipes.StartServer);
+                int cemuPid = CemuProcess.Id;
+                await Task.Run(() => NamedPipes.StartServer(cemuPid));
             }
             catch (Exception ex)
             {
