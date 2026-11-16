@@ -34,7 +34,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.View
             else
             {
                 Properties.Settings.Default.playerName = ((TextBox)sender).Text;
-                Properties.Settings.Default.Save();
+                SettingsSaver.SaveSafe();
             }
         }
     }

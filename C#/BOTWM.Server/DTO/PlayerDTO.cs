@@ -19,6 +19,7 @@ namespace BOTWM.Server.DTO
         public Quaternion Rotation3;
         public Quaternion Rotation4;
         public int Animation;
+        public int UpperAnimation; // CRC32 clip for the upper-body layer (shield, horse call, bow); 0 = follow Animation
         public int Health;
         public float AtkUp;
         public bool IsEquipped;
@@ -47,6 +48,7 @@ namespace BOTWM.Server.DTO
         public Quaternion Rotation3;
         public Quaternion Rotation4;
         public int Animation;
+        public int UpperAnimation; // CRC32 clip for the upper-body layer (shield, horse call, bow); 0 = follow Animation
         public int Health;
         public float AtkUp;
         public bool IsEquipped;

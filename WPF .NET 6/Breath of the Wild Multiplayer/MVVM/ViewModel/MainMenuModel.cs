@@ -255,7 +255,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
                 Properties.Settings.Default.backgroundDir = "";
                 Properties.Settings.Default.backgroundExt = "";
                 Properties.Settings.Default.actualBackground = "\\Images\\mainWindowBackground.png";
-                Properties.Settings.Default.Save();
+                SettingsSaver.SaveSafe();
                 SharedData.SettingsPanel.timer.Start();
                 return;
             }
@@ -263,7 +263,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
             if (Properties.Settings.Default.background == "Random" && string.IsNullOrEmpty(Properties.Settings.Default.backgroundDir) && string.IsNullOrEmpty(Properties.Settings.Default.backgroundExt))
             {
                 Properties.Settings.Default.actualBackground = "\\Images\\mainWindowBackground.png";
-                Properties.Settings.Default.Save();
+                SettingsSaver.SaveSafe();
                 SharedData.SettingsPanel.timer.Start();
                 return;
             }
@@ -274,7 +274,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
                 Properties.Settings.Default.backgroundDir = "";
                 Properties.Settings.Default.backgroundExt = "";
                 Properties.Settings.Default.actualBackground = "\\Images\\mainWindowBackground.png";
-                Properties.Settings.Default.Save();
+                SettingsSaver.SaveSafe();
                 SharedData.SettingsPanel.timer.Start();
                 return;
             }

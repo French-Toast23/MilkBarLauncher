@@ -1,4 +1,4 @@
-using Breath_of_the_Wild_Multiplayer.Source_files;
+﻿using Breath_of_the_Wild_Multiplayer.Source_files;
 using Breath_of_the_Wild_Multiplayer.MVVM.Model;
 using System;
 using System.Collections.ObjectModel;
@@ -62,20 +62,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
             }
         }
 
-        public bool IsModInstalled
-        {
-            get
-            {
-                string modActorsPack = $@"{BcmlSettings.MergedDir}\Actor\Pack";
-
-                // If the directory for the directory doesn't even exist. That is a clear indicator that the mod is not installed
-                if (!Directory.Exists(modActorsPack))
-                    return false;
-                // One of the unique assets created by the mod are the actors called JugadorXX.sbactorpack.
-                // If we don't have any Jugador, that means the mod is not installed.
-                return Directory.GetFiles(modActorsPack).Any(actor => actor.Contains("Jugador") && Path.GetExtension(actor) == ".sbactorpack");
-            }
-        }
+        public bool IsModInstalled => ModInstaller.IsInstalled;
 
         private Dictionary<int, LocalServerDTO> ServerMapping;
 
@@ -89,9 +76,37 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
 
         public int lastSelected = -1;
 
+        // ---- Cemu selector (above Connect): which of the up to four Cemu installs this launcher starts
+        public RelayCommand previousCemuClick { get; set; }
+        public RelayCommand nextCemuClick { get; set; }
+
+        public string ActiveCemuLabel => CemuProfiles.ConfiguredSlots.Any()
+            ? CemuProfiles.Describe(CemuProfiles.Active)
+            : "No Cemu set (Settings)";
+
+        public string ActiveCemuTooltip => (CemuProfiles.GetSlot(CemuProfiles.Active) ?? "Set your Cemu folders in Settings.") +
+            "\nUse the arrows to pick which Cemu this launcher starts. Run one launcher per Cemu to play together.";
+
+        public bool CanSwitchCemu => CemuProfiles.ConfiguredSlots.Count() > 1;
+
         public ServerBrowserModel()
         {
             SharedData.ServerBrowser = this;
+
+            // Started by another launcher's "players on this PC" dialog: use the Cemu it chose for us.
+            if (LaunchArgs.CemuSlot is int argSlot)
+                CemuProfiles.SetActiveForThisProcess(argSlot);
+
+            previousCemuClick = new RelayCommand(o => CemuProfiles.Cycle(-1));
+            nextCemuClick = new RelayCommand(o => CemuProfiles.Cycle(1));
+            CemuProfiles.Changed += () => System.Windows.Application.Current?.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                OnPropertyChanged(nameof(ActiveCemuLabel));
+                OnPropertyChanged(nameof(ActiveCemuTooltip));
+                OnPropertyChanged(nameof(CanSwitchCemu));
+                OnPropertyChanged(nameof(IsModInstalled));
+                LoadServers();
+            }));
 
             //findCemuData();
             isMaxOffset = true;
@@ -100,7 +115,11 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
             LoadServers();
 
             serverButtonClick = new RelayCommand(o => this.changeSelected(o));
-            connectClick = new AsyncRelayCommand(o => this.connectToServer(null));
+            connectClick = new AsyncRelayCommand(o => this.connectWithPlayerSetup());
+
+            if (LaunchArgs.AutoConnect != null)
+                System.Windows.Application.Current?.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle,
+                    new Action(() => new AsyncRelayCommand(_ => this.autoConnect()).Execute(null)));
             refreshClick = new RelayCommand(o =>
             {
                 foreach (var server in this._serversToShow)
@@ -183,6 +202,47 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
         //    }
         //}
 
+        /// <summary>
+        /// Connect button: asks how many players play on this PC and which Cemu each one uses. Player 1 plays
+        /// in this launcher; each other player gets a launcher of its own that connects to the same server.
+        /// </summary>
+        async Task connectWithPlayerSetup()
+        {
+            serverDataModel server = _selectedServer[0];
+            if (string.IsNullOrEmpty(server.IP) || !server.open)
+            {
+                await connectToServer(null); // keeps the usual checks and messages
+                return;
+            }
+
+            var dialog = new PlayerSetupWindow(server.Name) { Owner = System.Windows.Application.Current?.MainWindow };
+            if (dialog.ShowDialog() != true)
+                return;
+
+            List<int> slots = dialog.ChosenSlots;
+            CemuProfiles.Active = slots[0];
+
+            var target = new LaunchArgs.ServerTarget { Name = server.Name, IP = server.IP, Port = server.Port, Password = server.Password };
+            for (int i = 1; i < slots.Count; i++)
+            {
+                LaunchArgs.StartLauncherFor(slots[i], target);
+                await Task.Delay(2000); // stagger the Cemu starts a little
+            }
+
+            await connectToServer(null);
+        }
+
+        /// <summary>Launcher started by another launcher's player dialog: connect right away.</summary>
+        async Task autoConnect()
+        {
+            var t = LaunchArgs.AutoConnect;
+            SharedData.SetLoadingMessage($"Connecting {CemuProfiles.Describe(CemuProfiles.Active)}...");
+            var server = new serverDataModel(true, name: t.Name, ip: t.IP, port: t.Port, favorite: false, password: t.Password, async: false);
+            if (!server.open)
+                throw new ApplicationException("Could not connect to server. Check if the server is open.");
+            await connectToServer(server);
+        }
+
         async Task connectToServer(serverDataModel serverToJoin = null)
         {
             bool directConnection = serverToJoin != null;
@@ -191,18 +251,40 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
                 serverToJoin = _selectedServer[0];
 
             if (string.IsNullOrEmpty(BcmlSettings.GameDir) || string.IsNullOrEmpty(BcmlSettings.CemuDir))
-                throw new ApplicationException("Cemu or Game path not found. Please verify your game and Cemu installation.");
+                throw new ApplicationException($"Cemu or Game path not found for {CemuProfiles.Describe(CemuProfiles.Active)}. Please verify your game and Cemu installation.");
+
+            // Two launchers on the same Cemu folder would share its settings, logs and saves.
+            string chosenCemu = Path.GetFullPath(BcmlSettings.CemuDir).TrimEnd('\\');
+            foreach (Process running in Process.GetProcessesByName("Cemu"))
+            {
+                try
+                {
+                    string runningDir = Path.GetDirectoryName(running.MainModule?.FileName ?? "");
+                    if (!string.IsNullOrEmpty(runningDir) &&
+                        string.Equals(Path.GetFullPath(runningDir).TrimEnd('\\'), chosenCemu, StringComparison.OrdinalIgnoreCase))
+                        throw new ApplicationException($"{CemuProfiles.Describe(CemuProfiles.Active)} is already running. Pick another Cemu with the arrows above Connect.");
+                }
+                catch (ApplicationException) { throw; }
+                catch { }
+            }
 
             if (!IsModInstalled)
-                throw new ApplicationException("Mod graphic pack is not installed in Cemu. Please ensure BreathOfTheWild_Multiplayer graphic pack is installed.");
-
-            string cemuSettingsPath = Path.Combine(BcmlSettings.CemuDir, "settings.xml");
-            if (!File.Exists(cemuSettingsPath))
             {
-                string appDataSettings = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Cemu", "settings.xml");
-                if (File.Exists(appDataSettings))
-                    cemuSettingsPath = appDataSettings;
+                SharedData.SetLoadingMessage("Installing multiplayer mod...");
+                List<string> installWarnings = await Task.Run(() => ModInstaller.Install(msg => SharedData.SetLoadingMessage(msg)));
+                if (installWarnings.Any())
+                    throw new ApplicationException(string.Join("\n\n", installWarnings));
             }
+            else
+            {
+                await Task.Run(() => ModInstaller.EnsureEnabledInCemu());
+                // Re-deploy if this launcher ships a newer ModPack. Must run before the per-connect
+                // edits below (player model, Jugador attention), which modify the deployed files.
+                SharedData.SetLoadingMessage("Checking mod files...");
+                await Task.Run(() => BcmlSettings.ValidateAndFixGraphicPack());
+            }
+
+            string cemuSettingsPath = ModInstaller.SettingsXmlPath;
 
             // Does the settings file for cemu exist?
             if (!File.Exists(cemuSettingsPath))
@@ -317,7 +399,6 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
             List<Process> ProcessesToFilter = Injector.GetProcesses("Cemu");
 
             SharedData.SetLoadingMessage("Starting Cemu...");
-            BcmlSettings.ValidateAndFixGraphicPack();
 
             string cemuExe = Path.Combine(BcmlSettings.CemuDir, "Cemu.exe");
             if (!File.Exists(cemuExe))
@@ -331,7 +412,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
                 Arguments = $"-g \"{rpxFile}\"",
                 WorkingDirectory = BcmlSettings.CemuDir
             };
-            await Task.Run(() => Process.Start(cemuStartInfo));
+            Process startedCemu = await Task.Run(() => Process.Start(cemuStartInfo));
 
             await Task.Delay(500);
 
@@ -343,8 +424,12 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
             if (!File.Exists(dllPath))
                 dllPath = Path.Combine(Directory.GetCurrentDirectory(), "Resources", "InjectDLL.dll");
 
+            // Inject the Cemu this launcher started. Picking "any new Cemu process" let two launchers that start
+            // their Cemus at the same time grab the same one.
             await Task.Run(() => {
-                CemuProcess = Injector.Inject("Cemu", dllPath, ProcessesToFilter);
+                CemuProcess = startedCemu != null && !startedCemu.HasExited
+                    ? Injector.InjectToSpecificProcess("Cemu", dllPath, startedCemu)
+                    : Injector.Inject("Cemu", dllPath, ProcessesToFilter);
             });
 
             SharedData.SetLoadingMessage("Starting pipe...");
@@ -423,7 +508,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
         void SaveServerSettings()
         {
             Properties.Settings.Default.serversAdded = JsonConvert.SerializeObject(this.ServerList);
-            Properties.Settings.Default.Save();
+            SettingsSaver.SaveSafe();
         }
 
         public void ModifyServer(ServerInfoModel serverinfo)

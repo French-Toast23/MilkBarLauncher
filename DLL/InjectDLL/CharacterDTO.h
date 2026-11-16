@@ -21,6 +21,7 @@ namespace DTO
 		Quaternion Rotation3;
 		Quaternion Rotation4;
 		int Animation;
+		int UpperAnimation = 0; // upper-body layer clip (CRC32), 0 = follow Animation
 		int Health;
 		float AtkUp;
 		bool IsEquipped;
@@ -44,6 +45,7 @@ namespace DTO
 		Quaternion Rotation3;
 		Quaternion Rotation4;
 		int Animation;
+		int UpperAnimation = 0; // upper-body layer clip (CRC32), 0 = follow Animation
 		int Health;
 		float AtkUp;
 		bool IsEquipped;

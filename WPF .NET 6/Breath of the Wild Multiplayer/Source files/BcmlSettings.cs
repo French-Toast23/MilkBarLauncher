@@ -4,8 +4,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Xml.Linq;
-using Newtonsoft.Json;
-using CsYaz0;
 
 namespace Breath_of_the_Wild_Multiplayer.Source_files
 {
@@ -18,28 +16,23 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
         public static string CemuDir => ResolveCemuDir();
         public static string MergedDir => ResolveMergedDir();
 
+        /// <summary>
+        /// Folder of the Cemu this launcher window uses: the active slot of <see cref="CemuProfiles"/>.
+        /// Auto-detection is only used while no slot is set at all.
+        /// </summary>
         public static string ResolveCemuDir()
         {
-            // 1. From user setting (cemuLocation)
-            try
-            {
-                string userCemu = Properties.Settings.Default.cemuLocation;
-                if (!string.IsNullOrEmpty(userCemu))
-                {
-                    if (File.Exists(userCemu))
-                    {
-                        string dir = Path.GetDirectoryName(userCemu);
-                        if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
-                            return dir;
-                    }
-                    else if (Directory.Exists(userCemu))
-                    {
-                        return userCemu;
-                    }
-                }
-            }
-            catch { }
+            string slotDir = CemuProfiles.GetSlotDir(CemuProfiles.Active);
+            if (!string.IsNullOrEmpty(slotDir))
+                return slotDir;
+            if (CemuProfiles.ConfiguredSlots.Any())
+                return ""; // the chosen slot is empty or its folder is gone: don't silently use another Cemu
+            return AutoDetectCemuDir();
+        }
 
+        /// <summary>Best guess at a Cemu folder when the player hasn't picked one.</summary>
+        public static string AutoDetectCemuDir()
+        {
             // 2. From running Cemu process
             try
             {
@@ -52,11 +45,6 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
                 }
             }
             catch { }
-
-            // 3. From saved settings or legacy config
-            string fromSetting = getSetting("cemu_dir");
-            if (!string.IsNullOrEmpty(fromSetting) && Directory.Exists(fromSetting))
-                return fromSetting;
 
             // 4. Probe Desktop, Downloads, and UserProfile for Cemu directories
             try
@@ -109,7 +97,7 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
             }
             catch { }
 
-            return fromSetting ?? "";
+            return "";
         }
 
         public static string GetCemuDataDir()
@@ -124,6 +112,23 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
                 return cemuDir;
 
             return appDataCemu;
+        }
+
+        /// <summary>mlc01 folder used by the Cemu whose user data folder is <paramref name="userDataDir"/>.</summary>
+        public static string ResolveMlcDirFor(string userDataDir)
+        {
+            try
+            {
+                string xml = Path.Combine(userDataDir, "settings.xml");
+                if (File.Exists(xml))
+                {
+                    string customMlc = XDocument.Load(xml).Root?.Element("mlc_path")?.Value?.Trim();
+                    if (!string.IsNullOrEmpty(customMlc) && Directory.Exists(customMlc))
+                        return customMlc;
+                }
+            }
+            catch { }
+            return Path.Combine(userDataDir, "mlc01");
         }
 
         public static string ResolveMlcDir()
@@ -142,7 +147,11 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
                 catch { }
             }
 
-            // 2. Standard Cemu 2.x mlc01 in AppData
+            // 2. mlc01 inside Cemu's user data folder (AppData, or "portable" next to Cemu.exe)
+            string userDataMlc = Path.Combine(ModInstaller.ResolveCemuUserDataDir(), "mlc01");
+            if (Directory.Exists(userDataMlc))
+                return userDataMlc;
+
             string appDataMlc = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Cemu", "mlc01");
             if (Directory.Exists(appDataMlc))
                 return appDataMlc;
@@ -187,10 +196,6 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
             }
             catch { }
 
-            string fromSetting = getSetting("game_dir");
-            if (!string.IsNullOrEmpty(fromSetting) && Directory.Exists(fromSetting))
-                return fromSetting;
-
             // 1. Look in discovered MLC01 title folders across all regions (US: 101c9500, EU: 101c9400, JP: 101c9300)
             string mlcDir = ResolveMlcDir();
             if (Directory.Exists(mlcDir))
@@ -230,10 +235,6 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
 
         private static string ResolveUpdateDir()
         {
-            string fromSetting = getSetting("update_dir");
-            if (!string.IsNullOrEmpty(fromSetting) && Directory.Exists(fromSetting))
-                return fromSetting;
-
             // 1. Look in discovered MLC01 title folders across all regions (US: 101c9500, EU: 101c9400, JP: 101c9300)
             string mlcDir = ResolveMlcDir();
             if (Directory.Exists(mlcDir))
@@ -271,229 +272,17 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
             return null;
         }
 
-        private static string ResolveMergedDir()
-        {
-            // 1. Cemu 2.x standard graphic pack directory in AppData
-            string cemuGraphicPack = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Cemu", "graphicPacks", "BreathOfTheWild_Multiplayer", "content");
-            if (Directory.Exists(cemuGraphicPack))
-                return cemuGraphicPack;
+        // Content folder of the mod's Cemu graphic pack (created by ModInstaller, no BCML needed)
+        private static string ResolveMergedDir() => ModInstaller.PackContentDir;
 
-            // 2. Graphic pack directory next to Cemu.exe
-            string cemuDir = ResolveCemuDir();
-            if (!string.IsNullOrEmpty(cemuDir))
-            {
-                string localGraphicPack = Path.Combine(cemuDir, "graphicPacks", "BreathOfTheWild_Multiplayer", "content");
-                if (Directory.Exists(localGraphicPack))
-                    return localGraphicPack;
-            }
+        public static string GetCemuSettingsXmlPath() => ModInstaller.SettingsXmlPath;
 
-            // 3. BCML store_dir (if legacy BCML is used)
-            string storeDir = getSetting("store_dir");
-            if (!string.IsNullOrEmpty(storeDir))
-            {
-                string merged = Path.Combine(storeDir, "merged", "content");
-                if (Directory.Exists(merged))
-                    return merged;
-            }
-
-            return cemuGraphicPack;
-        }
-
-        public static string GetCemuSettingsXmlPath()
-        {
-            string appDataXml = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Cemu", "settings.xml");
-            if (File.Exists(appDataXml))
-                return appDataXml;
-
-            string cemuDir = ResolveCemuDir();
-            if (!string.IsNullOrEmpty(cemuDir))
-            {
-                string localXml = Path.Combine(cemuDir, "settings.xml");
-                if (File.Exists(localXml))
-                    return localXml;
-            }
-
-            return appDataXml;
-        }
-
-        private static string getSetting(string setting)
-        {
-            if (string.IsNullOrEmpty(Properties.Settings.Default.bcmlLocation) || !File.Exists(Properties.Settings.Default.bcmlLocation))
-                return null;
-
-            try
-            {
-                string cemuSettings = File.ReadAllText(Properties.Settings.Default.bcmlLocation);
-                var dict = JsonConvert.DeserializeObject<Dictionary<string, string>>(cemuSettings);
-                if (dict != null && dict.TryGetValue(setting, out string val))
-                    return val;
-            }
-            catch
-            {
-                // Ignore parse errors from invalid or empty settings files
-            }
-            return null;
-        }
-    
+        /// <summary>Re-syncs the installed graphic pack with the launcher's ModPack before launching.</summary>
         public static void ValidateAndFixGraphicPack()
         {
             try
             {
-                string merged = ResolveMergedDir();
-                if (string.IsNullOrEmpty(merged) || !Directory.Exists(merged))
-                    return;
-
-                // Ensure patch_NoFreezingLoadingScreen.asm is disabled as it breaks fast travel and locks camera in Cemu 2.6
-                string graphicPackDir = Directory.GetParent(merged)?.FullName;
-                if (!string.IsNullOrEmpty(graphicPackDir))
-                {
-                    string badPatch = Path.Combine(graphicPackDir, "patch_NoFreezingLoadingScreen.asm");
-                    if (File.Exists(badPatch))
-                    {
-                        try { File.Move(badPatch, badPatch + ".disabled", true); } catch { }
-                    }
-
-                    // Ensure updated asm patches are copied from patches/
-                    string[] patchesToUpdate = { "patch_UKL_Utils_DynamicBranch.asm", "patch_SpawnActors.asm", "patch_Weather.asm" };
-                    foreach (string patchFile in patchesToUpdate)
-                    {
-                        string src = Path.Combine(AppContext.BaseDirectory, "patches", patchFile);
-                        if (!File.Exists(src)) src = Path.Combine(Directory.GetCurrentDirectory(), "patches", patchFile);
-                        if (!File.Exists(src)) src = Path.Combine(AppContext.BaseDirectory, "..", "patches", patchFile);
-                        if (!File.Exists(src)) src = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "patches", patchFile);
-                        if (File.Exists(src))
-                        {
-                            string dst = Path.Combine(graphicPackDir, patchFile);
-                            try
-                            {
-                                if (!File.Exists(dst) || File.GetLastWriteTimeUtc(src) > File.GetLastWriteTimeUtc(dst) || new FileInfo(src).Length != new FileInfo(dst).Length)
-                                {
-                                    File.Copy(src, dst, true);
-                                }
-                            }
-                            catch { }
-                        }
-                    }
-                }
-
-                // Ensure corrupt 173-byte dummy GameRomCamera.sbactorpack is disabled so original game camera loads
-                string cameraPack = Path.Combine(merged, "Actor", "Pack", "GameRomCamera.sbactorpack");
-                if (File.Exists(cameraPack))
-                {
-                    var fi = new FileInfo(cameraPack);
-                    if (fi.Length < 1000)
-                    {
-                        try { File.Move(cameraPack, cameraPack + ".disabled", true); } catch { }
-                    }
-                }
-
-                // Ensure merged ActorInfo.product.sbyml with Jugador entries is present in graphic pack
-                string actorInfoPath = Path.Combine(merged, "Actor", "ActorInfo.product.sbyml");
-                bool needsCopy = !File.Exists(actorInfoPath);
-                if (!needsCopy)
-                {
-                    try
-                    {
-                        var fi = new FileInfo(actorInfoPath);
-                        if (fi.Length < 800000)
-                            needsCopy = true;
-                    }
-                    catch { }
-                }
-
-                if (needsCopy)
-                {
-                    string backupActorInfo = Path.Combine(AppContext.BaseDirectory, "patches", "ActorInfo.product.sbyml");
-                    if (!File.Exists(backupActorInfo))
-                        backupActorInfo = Path.Combine(Directory.GetCurrentDirectory(), "patches", "ActorInfo.product.sbyml");
-                    if (!File.Exists(backupActorInfo))
-                        backupActorInfo = Path.Combine(AppContext.BaseDirectory, "..", "patches", "ActorInfo.product.sbyml");
-                    if (!File.Exists(backupActorInfo))
-                        backupActorInfo = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "patches", "ActorInfo.product.sbyml");
-                    if (File.Exists(backupActorInfo))
-                    {
-                        try
-                        {
-                            Directory.CreateDirectory(Path.GetDirectoryName(actorInfoPath)!);
-                            File.Copy(backupActorInfo, actorInfoPath, true);
-                        }
-                        catch { }
-                    }
-                }
-
-                // Ensure updated ResourceSizeTable.product.srsizetable is present in graphic pack
-                string rstbPath = Path.Combine(merged, "System", "Resource", "ResourceSizeTable.product.srsizetable");
-                string backupRstb = Path.Combine(AppContext.BaseDirectory, "patches", "ResourceSizeTable.product.srsizetable");
-                if (!File.Exists(backupRstb)) backupRstb = Path.Combine(Directory.GetCurrentDirectory(), "patches", "ResourceSizeTable.product.srsizetable");
-                if (!File.Exists(backupRstb)) backupRstb = Path.Combine(AppContext.BaseDirectory, "..", "patches", "ResourceSizeTable.product.srsizetable");
-                if (!File.Exists(backupRstb)) backupRstb = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "patches", "ResourceSizeTable.product.srsizetable");
-                if (File.Exists(backupRstb))
-                {
-                    bool rstbNeedsCopy = !File.Exists(rstbPath) ||
-                                         new FileInfo(rstbPath).Length != new FileInfo(backupRstb).Length ||
-                                         File.GetLastWriteTimeUtc(backupRstb) > File.GetLastWriteTimeUtc(rstbPath);
-                    if (rstbNeedsCopy)
-                    {
-                        try
-                        {
-                            Directory.CreateDirectory(Path.GetDirectoryName(rstbPath)!);
-                            File.Copy(backupRstb, rstbPath, true);
-                        }
-                        catch { }
-                    }
-                }
-
-                string packDir = Path.Combine(merged, "Pack");
-                if (!Directory.Exists(packDir))
-                    return;
-
-                // Ensure merged Bootup.pack with multiplayer GameData & SaveData flags is present
-                string bootupPath = Path.Combine(packDir, "Bootup.pack");
-                string backupBootup = Path.Combine(AppContext.BaseDirectory, "patches", "Bootup.pack");
-                if (!File.Exists(backupBootup)) backupBootup = Path.Combine(Directory.GetCurrentDirectory(), "patches", "Bootup.pack");
-                if (!File.Exists(backupBootup)) backupBootup = Path.Combine(AppContext.BaseDirectory, "..", "patches", "Bootup.pack");
-                if (!File.Exists(backupBootup)) backupBootup = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "patches", "Bootup.pack");
-                if (File.Exists(backupBootup))
-                {
-                    bool bootupNeedsCopy = !File.Exists(bootupPath) ||
-                                           new FileInfo(bootupPath).Length != new FileInfo(backupBootup).Length ||
-                                           File.GetLastWriteTimeUtc(backupBootup) > File.GetLastWriteTimeUtc(bootupPath);
-                    if (bootupNeedsCopy)
-                    {
-                        try
-                        {
-                            Directory.CreateDirectory(packDir);
-                            File.Copy(backupBootup, bootupPath, true);
-                        }
-                        catch { }
-                    }
-                }
-
-                string[] rawPacks = { "Bootup.pack", "TitleBG.pack" };
-                foreach (string packName in rawPacks)
-                {
-                    string packPath = Path.Combine(packDir, packName);
-                    if (File.Exists(packPath))
-                    {
-                        byte[] header = new byte[4];
-                        byte[] decompressed = null;
-                        using (var fs = new FileStream(packPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                        {
-                            if (fs.Read(header, 0, 4) == 4 &&
-                                header[0] == 0x59 && header[1] == 0x61 && header[2] == 0x7A && header[3] == 0x30)
-                            {
-                                fs.Seek(0, SeekOrigin.Begin);
-                                byte[] compressed = new byte[fs.Length];
-                                fs.Read(compressed, 0, compressed.Length);
-                                decompressed = Yaz0.Decompress(compressed);
-                            }
-                        }
-                        if (decompressed != null)
-                        {
-                            File.WriteAllBytes(packPath, decompressed);
-                        }
-                    }
-                }
+                ModInstaller.Repair();
             }
             catch (Exception ex)
             {

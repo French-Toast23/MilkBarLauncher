@@ -105,6 +105,7 @@
                         <RowDefinition Height="85"/>
                         <RowDefinition Height="6*"/>
                         <RowDefinition Height="157*"/>
+                        <RowDefinition Height="44"/>
                         <RowDefinition Height="80"/>
                     </Grid.RowDefinitions>
 
@@ -171,9 +172,23 @@
                         </StackPanel>
                     </StackPanel>
 
-                    <Button 
-                        Content="{Binding selectedServer[0].connectMessage}" 
-                        Grid.Row="3" 
+                    <!-- Which Cemu this launcher starts (set the folders in Settings) -->
+                    <DockPanel Grid.Row="3" Margin="10,0,10,0" LastChildFill="True"
+                               DataContext="{Binding RelativeSource={RelativeSource AncestorType={x:Type local:ServerBrowser}}, Path=DataContext}"
+                               ToolTip="{Binding ActiveCemuTooltip}">
+                        <Button DockPanel.Dock="Left" Content="&lt;" Width="40" Command="{Binding previousCemuClick}"
+                                IsEnabled="{Binding CanSwitchCemu}" Background="Transparent" BorderThickness="0"
+                                Foreground="White" FontFamily="Roboto" FontWeight="Bold" FontSize="24" Cursor="Hand"/>
+                        <Button DockPanel.Dock="Right" Content="&gt;" Width="40" Command="{Binding nextCemuClick}"
+                                IsEnabled="{Binding CanSwitchCemu}" Background="Transparent" BorderThickness="0"
+                                Foreground="White" FontFamily="Roboto" FontWeight="Bold" FontSize="24" Cursor="Hand"/>
+                        <Label Content="{Binding ActiveCemuLabel}" Foreground="White" FontFamily="Roboto" FontStyle="Italic"
+                               FontSize="20" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
+                    </DockPanel>
+
+                    <Button
+                        Content="{Binding selectedServer[0].connectMessage}"
+                        Grid.Row="4"
                         Margin="10" 
                         Style="{StaticResource ConnectToServerButton}" 
                         Command="{Binding RelativeSource={RelativeSource AncestorType={x:Type local:ServerBrowser}}, Path=DataContext.connectClick}"

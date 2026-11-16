@@ -239,6 +239,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="ActorData.h" />
+    <ClInclude Include="AnimTables.h" />
+    <ClInclude Include="AnimNames.h" />
+    <ClInclude Include="AnimDebug.h" />
+    <ClInclude Include="LinkASMap.h" />
     <ClInclude Include="BigEndian.h" />
     <ClInclude Include="BombAccess.h" />
     <ClInclude Include="BombDTO.h" />

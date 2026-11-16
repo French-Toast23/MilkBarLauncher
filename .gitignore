@@ -353,3 +353,9 @@ MigrationBackup/
 Build/
 
 scratch/
+
+# Local-only folders (never commit)
+# IDA database of the game executable (derived from Nintendo code, very large)
+game and ida/
+# Third-party mods kept locally for reference
+Kirbymods/

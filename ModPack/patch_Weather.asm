@@ -29,26 +29,6 @@ MP_Weather_WeatherBytesMap:
 .byte 0
 .byte 0
 
-MP_Spawn_Enabled:
-.int 0
-
-MP_Spawn_R3:
-.int 0
-MP_Spawn_R4:
-.int 0
-MP_Spawn_R5:
-.int 0
-MP_Spawn_R6:
-.int 0
-MP_Spawn_R7:
-.int 0
-MP_Spawn_R8:
-.int 0
-MP_Spawn_R9:
-.int 0
-MP_Spawn_R10:
-.int 0
-
 MP_Weather_ChangeWeatherCalled:
 b MP_Weather_HookWeather
 MP_Weather_ChangeWeather:
@@ -89,53 +69,11 @@ b MP_Weather_RestoreAndExit
 MP_Weather_CallDllFunc:
 lis r11, MP_Weather_HLELoc@ha
 addi r11, r11, MP_Weather_HLELoc@l
-cmpwi r11, 0x0
-beq MP_Weather_RestoreAndExit
 mtctr r11
 
 lis r3, MP_Weather_WeatherBytesMap@ha
 addi r3, r3, MP_Weather_WeatherBytesMap@l
 bctrl
-
-; Check if actor spawn requested from C++
-lis r11, MP_Spawn_Enabled@ha
-lwz r11, MP_Spawn_Enabled@l(r11)
-cmpwi r11, 0x0
-beq MP_Weather_RestoreAndExit
-
-; Clear Enabled flag
-li r11, 0x0
-lis r12, MP_Spawn_Enabled@ha
-stw r11, MP_Spawn_Enabled@l(r12)
-
-; Load registers for createActor_
-lis r11, MP_Spawn_R3@ha
-lwz r3, MP_Spawn_R3@l(r11)
-lis r11, MP_Spawn_R4@ha
-lwz r4, MP_Spawn_R4@l(r11)
-lis r11, MP_Spawn_R5@ha
-lwz r5, MP_Spawn_R5@l(r11)
-lis r11, MP_Spawn_R6@ha
-lwz r6, MP_Spawn_R6@l(r11)
-lis r11, MP_Spawn_R7@ha
-lwz r7, MP_Spawn_R7@l(r11)
-lis r11, MP_Spawn_R8@ha
-lwz r8, MP_Spawn_R8@l(r11)
-lis r11, MP_Spawn_R9@ha
-lwz r9, MP_Spawn_R9@l(r11)
-lis r11, MP_Spawn_R10@ha
-lwz r10, MP_Spawn_R10@l(r11)
-
-; Set return address to MP_Weather_RestoreAndExit
-lis r11, MP_Weather_RestoreAndExit@ha
-addi r11, r11, MP_Weather_RestoreAndExit@l
-mtlr r11
-
-; Branch to createActor_
-lis r11, 0x037b
-ori r11, r11, 0x6040
-mtctr r11
-bctr
 
 MP_Weather_RestoreAndExit:
 lwz r3, 44(r1)

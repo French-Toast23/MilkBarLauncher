@@ -239,6 +239,7 @@ DTO::CloseCharacterDTO* Serializer::DeserializeCloseCharacter(std::vector<byte> 
 	copyData(&result->Rotation3, &input[0] + currentIndex, 16);
 	copyData(&result->Rotation4, &input[0] + currentIndex, 16);
 	copyData(&result->Animation, &input[0] + currentIndex, 4);
+	copyData(&result->UpperAnimation, &input[0] + currentIndex, 4);
 	copyData(&result->Health, &input[0] + currentIndex, 4);
 	copyData(&result->AtkUp, &input[0] + currentIndex, 4);
 	copyData(&result->IsEquipped, &input[0] + currentIndex, 1);
@@ -512,6 +513,7 @@ void Serializer::SerializeCharacterData(DTO::ClientCharacterDTO* input)
 	copyData(&ClientData[0] + currentIndex, &input->Rotation3, 16);
 	copyData(&ClientData[0] + currentIndex, &input->Rotation4, 16);
 	copyData(&ClientData[0] + currentIndex, &input->Animation, 4);
+	copyData(&ClientData[0] + currentIndex, &input->UpperAnimation, 4);
 	copyData(&ClientData[0] + currentIndex, &input->Health, 4);
 	copyData(&ClientData[0] + currentIndex, &input->AtkUp, 4);
 	copyData(&ClientData[0] + currentIndex, &input->IsEquipped, 1);

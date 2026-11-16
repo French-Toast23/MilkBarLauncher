@@ -222,6 +222,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Self-contained mod graphic pack used by ModInstaller (replaces BCML/UKMM) -->
+    <None Include="..\..\ModPack\**\*" LinkBase="ModPack" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AampLibrary" Version="1.0.10" />
     <PackageReference Include="CsYaz0" Version="1.0.2" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />

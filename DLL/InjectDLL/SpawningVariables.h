@@ -106,11 +106,43 @@ std::map<char, bool> prevKeyStateMap; // Used for key press logic - keeps track 
 
 std::vector<QueueActor> queuedActors;
 
+// createActor_ is called with parameters captured from the game's own last createActor_ call.
+// Those point into the current stage, so after a stage change / teleport the next spawn waits for
+// a fresh capture; reusing old ones created random actors (a Hyrule Bass) instead of the player.
+static bool s_needFreshCapture = true;
+
+// Set when the game tears down a stage (teleport/fast travel). Spawning while the old stage is being
+// destroyed crashed Cemu, so createActor_ is held off until this time has passed.
+static DWORD s_stageUnstableUntil = 0;
+
+// Last good capture, kept when a remote actor vanishes on a stage that didn't change (soft reset).
+// If the game creates no actor of its own for a while (player standing still), the respawn reuses it
+// instead of stalling forever. A real stage change (Link erased, teleport) drops it.
+static bool s_haveCaptureBackup = false;
+static int s_backupR3 = 0, s_backupR5 = 0, s_backupR7 = 0;
+static DWORD s_captureWaitSince = 0;
+static bool s_keepBackupOnNextReset = false;
+
+namespace Main {
+	void RequestFreshSpawnCapture() { s_needFreshCapture = true; s_keepBackupOnNextReset = false; }
+
+	// keepCaptureBackup: the stage itself did not change (a remote actor vanished), see above.
+	void MarkStageUnstable(DWORD ms, bool keepCaptureBackup)
+	{
+		if (!keepCaptureBackup || !s_needFreshCapture)
+			s_keepBackupOnNextReset = keepCaptureBackup;
+		s_needFreshCapture = true;
+		DWORD until = GetTickCount() + ms;
+		if ((int)(until - s_stageUnstableUntil) > 0)
+			s_stageUnstableUntil = until;
+	}
+
+	bool IsStageUnstable() { return (int)(s_stageUnstableUntil - GetTickCount()) > 0; }
+}
+
 static uint32_t s_startTrnsDataGuestAddr = 0;
 static uint32_t s_storageStartGuestAddr = 0;
 static uint32_t s_storageEndGuestAddr = 0;
-static uint8_t s_cachedActorStorage[104] = { 0 };
-static bool s_hasCachedActorStorage = false;
 
 MemoryInstance* memInstance;
 
@@ -167,106 +199,96 @@ void queueActor(std::string actorName, float Position[3])
 	Logging::LoggerService::LogInformation("Queued actor '" + actorName + "' at (" + std::to_string(Position[0]) + ", " + std::to_string(Position[1]) + ", " + std::to_string(Position[2]) + "). Queue size: " + std::to_string(queuedActors.size()), __FUNCTION__);
 }
 
-static inline bool IsActorManagerReady(uint32_t f_r3, uint64_t baseAddr)
+
+// Fills instData with a copy of the game's own actor storage (captured from r7 of the last
+// vanilla createActor_ call), patched with our position / name. Offsets are counted from the
+// end because InstanceData is stored byte-reversed (read/written as big endian).
+static void PrepareInstanceData(InstanceData& instData, const QueueActor& qAct)
 {
-	if (f_r3 < 0x10000000 || f_r3 >= 0x40000000) return false;
-	uint32_t sub = (uint32_t)Memory::read_bigEndian4Bytes(baseAddr + f_r3 + 0x80);
-	if (sub < 0x10000000 || sub >= 0x40000000) return false;
-	uint32_t stageFactory = (uint32_t)Memory::read_bigEndian4Bytes(baseAddr + sub + 0x0C);
-	if (stageFactory < 0x10000000 || stageFactory >= 0x40000000) return false;
-	uint32_t vtable = (uint32_t)Memory::read_bigEndian4Bytes(baseAddr + stageFactory + 0x84);
-	if (vtable < 0x02000000 || vtable >= 0x05000000) return false;
-	return true;
+	auto put = [&](int offsetFromEnd, const void* src, size_t size) {
+		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - offsetFromEnd], src, size);
+	};
+
+	put(15 * 4, &qAct.PosX, sizeof(float));
+	put(16 * 4, &qAct.PosY, sizeof(float));
+	put(17 * 4, &qAct.PosZ, sizeof(float));
+
+	const float traverseDist = 0.f;
+	const short traverseDistInt = 0;
+	put(18 * 4, &traverseDist, sizeof(float));
+	put(37 * 2, &traverseDistInt, sizeof(short));
+
+	const int null = 0;
+	put(11 * 4, &null, sizeof(int)); // mLinkData
+	put(9 * 4, &null, sizeof(int));  // mData
+	put(10 * 4, &null, sizeof(int)); // mProc
+	put(7 * 4, &null, sizeof(int));
+	put(3 * 4, &null, sizeof(int));
+	put(14 * 4, &null, sizeof(int)); // HashId
+
+	const int traverseDistFixer = 0x043B0000;
+	const int traverseDistFixer2 = 0x00000016;
+	put(2 * 4, &traverseDistFixer, sizeof(int));
+	put(1 * 4, &traverseDistFixer2, sizeof(int));
+
+	const int invalid = -1;
+	put(12 * 4, &invalid, sizeof(int)); // mRevivalGameDataFlagHash
+	put(13 * 4, &invalid, sizeof(int));
+	put(8 * 4, &invalid, sizeof(int));
+
+	// The storage is a ksys::map::Object (zeldaret/botw src/KingSystem/Map/mapObject.h; Wii U layout: a field
+	// at guest offset g is written with put(g + size)). Fields the copy still took from the game's last spawned
+	// actor tied our player to that actor's map data, and the game sometimes deleted it within a second
+	// (copied from 'SitRemainsWind_Far', a far-LOD static object). Reset them to "standalone actor" values.
+	const int idAndNoCompound = 0x0000FFFF; // 0x0C mId = 0, 0x0E mStaticCompoundActorId = -1 (not in a static compound)
+	put(0x0C + 4, &idAndNoCompound, sizeof(int));
+	put(0x10 + 4, &null, sizeof(int));      // 0x10 _10 (pointer into the source actor's map data)
+	put(0x14 + 4, &null, sizeof(int));      // 0x14 _18 (pointer into the source actor's map data)
+	put(0x48 + 4, &null, sizeof(int));      // 0x48 mTraverseDistInt = 0, 0x4A mHardModeFlags = 0 (not master-mode / one-hit only)
+
+	// Name, stored reversed and null terminated
+	int pos = sizeof(instData.name) - 1;
+	for (char c : qAct.Name)
+	{
+		if (pos <= 0) break;
+		instData.name[pos--] = c;
+	}
+	instData.name[pos] = 0;
 }
 
 void setupActor(PPCInterpreter_t* hCPU, TransferableData& trnsData, InstanceData& instData, uint32_t startRingBuffer, uint32_t endRingBuffer, uint64_t baseAddress) {
-	if (Main::s_LocalLinkAddr == 0 || !Game::GameInstance || Game::GameInstance->baseAddr == 0)
-		return;
-
-	if (!Memory::IsStageReady() || !IsActorManagerReady(trnsData.f_r3, baseAddress))
-	{
-		trnsData.f_r3 = 0;
-		trnsData.interceptRegisters = true;
-		s_hasCachedActorStorage = false;
-		return;
-	}
-
 	if (queuedActors.empty())
+		return;
+
+	// Wait until the game has called createActor_ itself in this stage so we have valid params.
+	if (trnsData.f_r3 == 0 || trnsData.f_r7 == 0)
 		return;
 
 	QueueActor qAct = queuedActors[0];
 
-
-	// Lets set any data that our params will reference:
-	// -------------------------------------------------
-
-	// Copy needed data over to our own storage to not override actor stuff
-	data_mutex.lock_shared(); //////////////////////////////////////////////////
-	memInstance->memory_readMemoryBE(trnsData.f_r7, &instData.actorStorage, baseAddress);
-	data_mutex.unlock_shared(); //==============================================
-
-	int actorStorageLocation = trnsData.ringPtr + sizeof(instData) - sizeof(instData.name) - sizeof(instData.actorStorage);
-	int mubinLocation = trnsData.ringPtr + sizeof(instData) - sizeof(instData.name) - sizeof(instData.actorStorage) + (7 * 4); // The MubinIter lives inside the actor btw
-
-	// Set actor pos to stored pos
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (15 * 4)], &qAct.PosX, sizeof(float));
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (16 * 4)], &qAct.PosY, sizeof(float));
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (17 * 4)], &qAct.PosZ, sizeof(float));
-
-	// We want to make sure there's a fairly high traverseDist
-	float traverseDist = 0.f; // Hmm... this kinda proves this isn't really used
-	short traverseDistInt = (short)traverseDist;
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (18 * 4)], &traverseDist, sizeof(float));
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (37 * 2)], &traverseDistInt, sizeof(short));
-
-	int null = 0;
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (11 * 4)], &null, sizeof(int)); // mLinkData
-
-	// Might as well null out some other things
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (9 * 4)], &null, sizeof(int)); // mData
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (10 * 4)], &null, sizeof(int)); // mProc
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (7 * 4)], &null, sizeof(int)); // idk what this is
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (3 * 4)], &null, sizeof(int)); // or this, either
-
-
-
-	// Not sure what these are, but they helps with traverseDist issues
-	int traverseDistFixer = 0x043B0000;
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (2 * 4)], &traverseDistFixer, sizeof(int));
-	int traverseDistFixer2 = 0x00000016;
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (1 * 4)], &traverseDistFixer2, sizeof(int));
-
-
-	// Oh, and the HashId as well
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (14 * 4)], &null, sizeof(int));
-
-	// And we can make mRevivalGameDataFlagHash an invalid handle
-	int invalid = -1;
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (12 * 4)], &invalid, sizeof(int));
-	// And whatever this is, too
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (13 * 4)], &invalid, sizeof(int));
-
-	// We can also get rid of this junk
-	memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (8 * 4)], &invalid, sizeof(int));
-
-
-
-
-	// Set name!
-	{ // Copy to name string storage... reversed
-		int pos = sizeof(instData.name) - 1;
-		for (char const& c : qAct.Name) {
-			memcpy(instData.name + pos, &c, 1);
-			pos--;
+	// Diagnostics: which game actor the copied placement data comes from. A fresh capture still has the
+	// game's own name pointer in r4; after our first spawn r4 points into our ring buffer.
+	{
+		static std::string s_templateName = "?";
+		if (trnsData.f_r4 != 0 && (trnsData.f_r4 < (int)startRingBuffer || trnsData.f_r4 >= (int)endRingBuffer))
+		{
+			std::string n = Memory::read_string(baseAddress + (uint32_t)trnsData.f_r4, 48, __FUNCTION__);
+			if (!n.empty()) s_templateName = n;
 		}
-		uint8_t nullByte = 0;
-		memcpy(instData.name + pos, &nullByte, 1); // Null terminate!
+		Logging::LoggerService::LogInformation("Spawn template: placement data copied from '" + s_templateName + "'", __FUNCTION__);
 	}
 
-	// -------------------------------------------------
+	// Copy the game's actor storage into our own slot so we don't modify the game's data
+	data_mutex.lock_shared();
+	memInstance->memory_readMemoryBE(trnsData.f_r7, &instData.actorStorage, baseAddress);
+	data_mutex.unlock_shared();
 
-	// Set registers for params and stuff
+	PrepareInstanceData(instData, qAct);
+
+	int actorStorageLocation = trnsData.ringPtr + sizeof(instData) - sizeof(instData.name) - sizeof(instData.actorStorage);
+	int mubinLocation = actorStorageLocation + (7 * 4); // The MubinIter lives inside the actor
 	int nameLocation = trnsData.ringPtr + sizeof(instData) - sizeof(instData.name);
+
 	hCPU->gpr[3] = trnsData.f_r3;
 	hCPU->gpr[4] = nameLocation;
 	hCPU->gpr[5] = trnsData.f_r5 ? trnsData.f_r5 : 0xFFFFFFFF;
@@ -283,30 +305,25 @@ void setupActor(PPCInterpreter_t* hCPU, TransferableData& trnsData, InstanceData
 	trnsData.f_r8 = 0;
 	trnsData.f_r9 = 1;
 	trnsData.f_r10 = 0;
-	trnsData.fnAddr = 0x037b6040; // Address to call to
-
-	trnsData.enabled = true; // This tells the assembly patch to trigger one function call
-
-	trnsData.interceptRegisters = false; // We don't want to intercept *this* function call
+	trnsData.fnAddr = 0x037b6040; // ksys::act::ActorCreator::createActor_
+	trnsData.enabled = true;              // asm patch performs exactly one call
+	trnsData.interceptRegisters = false;  // don't capture our own call
 
 	std::stringstream ss;
 	ss << "setupActor: Invoking createActor_ for '" << qAct.Name << "' at ("
-	   << qAct.PosX << ", " << qAct.PosY << ", " << qAct.PosZ << ") fn=0x037b6040 ringPtr=0x"
-	   << std::hex << trnsData.ringPtr << " actorStorage=0x" << actorStorageLocation
-	   << " mubin=0x" << mubinLocation;
+	   << qAct.PosX << ", " << qAct.PosY << ", " << qAct.PosZ << ") ringPtr=0x"
+	   << std::hex << trnsData.ringPtr;
 	Logging::LoggerService::LogInformation(ss.str(), __FUNCTION__);
 
-	// Write our actor data!
-	data_mutex.lock(); ////////////////////////////////////////////////////
+	data_mutex.lock();
 	memInstance->memory_writeMemoryBE(trnsData.ringPtr, instData, baseAddress);
-	data_mutex.unlock(); //================================================
+	data_mutex.unlock();
 
-	trnsData.ringPtr += sizeof(InstanceData); // Move our ring ptr to the next slot!
-	if (trnsData.ringPtr >= endRingBuffer) // If we're at the end of the ring....
-trnsData.ringPtr = startRingBuffer; // move to the start!
+	trnsData.ringPtr += sizeof(InstanceData);
+	if (trnsData.ringPtr >= (int)endRingBuffer)
+		trnsData.ringPtr = startRingBuffer;
 
-// Gotta remove this actor from the queue!
-queuedActors.erase(queuedActors.begin());
+	queuedActors.erase(queuedActors.begin());
 }
 
 void mainFn(PPCInterpreter_t* hCPU, uint32_t startTrnsData, uint32_t startRingBuffer, uint32_t endRingBuffer, uint64_t baseAddress) {
@@ -317,17 +334,11 @@ void mainFn(PPCInterpreter_t* hCPU, uint32_t startTrnsData, uint32_t startRingBu
 	if (baseAddress == 0 || !memInstance || startTrnsData < 0x1000)
 		return;
 
-	if (Main::s_LocalLinkAddr == 0 || !Game::GameInstance || Game::GameInstance->baseAddr == 0)
+	if (!Memory::IsStageReady() || !Game::GameInstance || Game::GameInstance->baseAddr == 0)
 		return;
 
-	if (!Memory::IsStageReady())
-	{
-		std::unique_lock<std::shared_mutex> qLock(queue_mutex, std::try_to_lock);
-		if (qLock.owns_lock())
-			queuedActors.clear();
-		s_hasCachedActorStorage = false;
-		return;
-	}
+	if (Main::IsStageUnstable())
+		return; // stage is being torn down / reloaded: never call createActor_ now
 
 	s_startTrnsDataGuestAddr = startTrnsData;
 	s_storageStartGuestAddr = startRingBuffer;
@@ -349,11 +360,37 @@ void mainFn(PPCInterpreter_t* hCPU, uint32_t startTrnsData, uint32_t startRingBu
 
 	trnsData.interceptRegisters = true;
 
-	queue_mutex.lock();
-	if (queuedActors.size() >= 1) {
-		setupActor(hCPU, trnsData, instData, startRingBuffer, endRingBuffer, baseAddress);
+	if (s_needFreshCapture)
+	{
+		s_needFreshCapture = false;
+		if (s_keepBackupOnNextReset && trnsData.f_r3 != 0 && trnsData.f_r7 != 0)
+		{
+			s_haveCaptureBackup = true;
+			s_backupR3 = trnsData.f_r3; s_backupR5 = trnsData.f_r5; s_backupR7 = trnsData.f_r7;
+		}
+		else if (!s_keepBackupOnNextReset)
+			s_haveCaptureBackup = false;
+		s_keepBackupOnNextReset = false;
+		s_captureWaitSince = GetTickCount();
+		trnsData.f_r3 = trnsData.f_r4 = trnsData.f_r5 = trnsData.f_r6 = 0;
+		trnsData.f_r7 = trnsData.f_r8 = trnsData.f_r9 = trnsData.f_r10 = 0;
 	}
-	queue_mutex.unlock();
+	else
+	{
+		if ((trnsData.f_r3 == 0 || trnsData.f_r7 == 0) && s_haveCaptureBackup &&
+			GetTickCount() - s_captureWaitSince > 15000 && !queuedActors.empty())
+		{
+			trnsData.f_r3 = s_backupR3; trnsData.f_r5 = s_backupR5; trnsData.f_r7 = s_backupR7;
+			s_haveCaptureBackup = false;
+			Logging::LoggerService::LogInformation("No fresh createActor_ capture for 15 s on an unchanged stage; reusing the previous one.", __FUNCTION__);
+		}
+		else if (trnsData.f_r3 != 0 && trnsData.f_r7 != 0)
+			s_haveCaptureBackup = false; // fresh capture arrived
+
+		queue_mutex.lock();
+		setupActor(hCPU, trnsData, instData, startRingBuffer, endRingBuffer, baseAddress);
+		queue_mutex.unlock();
+	}
 
 	data_mutex.lock();
 	memInstance->memory_writeMemoryBE(startTrnsData, trnsData, baseAddress);
@@ -388,161 +425,6 @@ enum Weather : uint32_t
 
 Weather newWeather = (Weather)0;
 
-void ProcessActorSpawnsInWeather(PPCInterpreter_t* hCPU, uint32_t mapAddr)
-{
-	if (!hCPU || Main::baseAddr == 0 || !memInstance || mapAddr == 0)
-		return;
-
-	if (Main::s_LocalLinkAddr == 0 || !Game::GameInstance || Game::GameInstance->baseAddr == 0)
-		return;
-
-	if (!Memory::IsStageReady())
-	{
-		std::unique_lock<std::shared_mutex> qLock(queue_mutex, std::try_to_lock);
-		if (qLock.owns_lock())
-			queuedActors.clear();
-		s_hasCachedActorStorage = false;
-		return;
-	}
-
-	if (s_startTrnsDataGuestAddr == 0)
-	{
-		s_startTrnsDataGuestAddr = 0x01808020;
-		s_storageStartGuestAddr = 0x01800020;
-		s_storageEndGuestAddr = 0x01808020;
-	}
-
-	try
-	{
-		std::unique_lock<std::shared_mutex> qLock(queue_mutex, std::try_to_lock);
-		if (!qLock.owns_lock() || queuedActors.empty())
-			return;
-
-		// Check if previous spawn is still pending execution in patch_Weather.asm
-		uint32_t spawnPending = Memory::read_bigEndian4Bytes(Main::baseAddr + mapAddr + 12);
-		if (spawnPending != 0)
-			return;
-
-		data_mutex.lock();
-		TransferableData trnsData;
-		memInstance->memory_readMemoryBE(s_startTrnsDataGuestAddr, &trnsData, Main::baseAddr);
-
-		if (!Memory::IsStageReady())
-		{
-			trnsData.f_r3 = 0;
-			trnsData.interceptRegisters = true;
-			s_hasCachedActorStorage = false;
-			queuedActors.clear();
-			data_mutex.unlock();
-			return;
-		}
-
-		if (trnsData.f_r3 == 0 || (trnsData.f_r7 == 0 && !s_hasCachedActorStorage))
-		{
-			if (!trnsData.interceptRegisters)
-			{
-				trnsData.interceptRegisters = true;
-				memInstance->memory_writeMemoryBE(s_startTrnsDataGuestAddr, trnsData, Main::baseAddr);
-			}
-			data_mutex.unlock();
-			return;
-		}
-
-		if (!IsActorManagerReady(trnsData.f_r3, Main::baseAddr))
-		{
-			data_mutex.unlock();
-			return;
-		}
-
-		QueueActor qAct = queuedActors[0];
-
-		InstanceData instData;
-		if (!s_hasCachedActorStorage && trnsData.f_r7 != 0)
-		{
-			memInstance->memory_readMemoryBE(trnsData.f_r7, &instData.actorStorage, Main::baseAddr);
-			memcpy(s_cachedActorStorage, instData.actorStorage, sizeof(s_cachedActorStorage));
-			s_hasCachedActorStorage = true;
-		}
-		else if (s_hasCachedActorStorage)
-		{
-			memcpy(instData.actorStorage, s_cachedActorStorage, sizeof(instData.actorStorage));
-		}
-
-		int actorStorageLocation = trnsData.ringPtr + sizeof(instData) - sizeof(instData.name) - sizeof(instData.actorStorage);
-		int mubinLocation = trnsData.ringPtr + sizeof(instData) - sizeof(instData.name) - sizeof(instData.actorStorage) + (7 * 4);
-
-		// Set actor pos to stored pos
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (15 * 4)], &qAct.PosX, sizeof(float));
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (16 * 4)], &qAct.PosY, sizeof(float));
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (17 * 4)], &qAct.PosZ, sizeof(float));
-
-		float traverseDist = 0.f;
-		short traverseDistInt = (short)traverseDist;
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (18 * 4)], &traverseDist, sizeof(float));
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (37 * 2)], &traverseDistInt, sizeof(short));
-
-		int null = 0;
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (11 * 4)], &null, sizeof(int));
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (9 * 4)], &null, sizeof(int));
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (10 * 4)], &null, sizeof(int));
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (7 * 4)], &null, sizeof(int));
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (3 * 4)], &null, sizeof(int));
-
-		int traverseDistFixer = 0x043B0000;
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (2 * 4)], &traverseDistFixer, sizeof(int));
-		int traverseDistFixer2 = 0x00000016;
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (1 * 4)], &traverseDistFixer2, sizeof(int));
-
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (14 * 4)], &null, sizeof(int));
-
-		int invalid = -1;
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (12 * 4)], &invalid, sizeof(int));
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (13 * 4)], &invalid, sizeof(int));
-		memcpy(&instData.actorStorage[sizeof(instData.actorStorage) - (8 * 4)], &invalid, sizeof(int));
-
-		int pos = sizeof(instData.name) - 1;
-		for (char const& c : qAct.Name)
-		{
-			memcpy(instData.name + pos, &c, 1);
-			pos--;
-		}
-		uint8_t nullByte = 0;
-		memcpy(instData.name + pos, &nullByte, 1);
-
-		memInstance->memory_writeMemoryBE(trnsData.ringPtr, instData, Main::baseAddr);
-
-		int nameLocation = trnsData.ringPtr + sizeof(instData) - sizeof(instData.name);
-
-		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 16, trnsData.f_r3);
-		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 20, nameLocation);
-		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 24, trnsData.f_r5 ? trnsData.f_r5 : 0xFFFFFFFF);
-		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 28, mubinLocation);
-		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 32, actorStorageLocation);
-		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 36, 0);
-		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 40, 1);
-		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 44, 0);
-
-		Memory::write_bigEndian4Bytes(Main::baseAddr + mapAddr + 12, 1);
-
-		trnsData.ringPtr += sizeof(InstanceData);
-		if (s_storageEndGuestAddr != 0 && trnsData.ringPtr >= (int)s_storageEndGuestAddr)
-			trnsData.ringPtr = s_storageStartGuestAddr;
-
-		memInstance->memory_writeMemoryBE(s_startTrnsDataGuestAddr, trnsData, Main::baseAddr);
-		data_mutex.unlock();
-
-		std::stringstream ss;
-		ss << "ProcessActorSpawnsInWeather: Dispatched createActor_ for '" << qAct.Name << "' at ("
-		   << qAct.PosX << ", " << qAct.PosY << ", " << qAct.PosZ << ") nameAddr=0x"
-		   << std::hex << nameLocation << " actorStorage=0x" << actorStorageLocation
-		   << " mubin=0x" << mubinLocation << " r3=0x" << trnsData.f_r3;
-		Logging::LoggerService::LogInformation(ss.str(), __FUNCTION__);
-
-		queuedActors.erase(queuedActors.begin());
-	}
-	catch (...) {}
-}
-
 void WeatherFn(PPCInterpreter_t* hCPU) {
 	if (!hCPU) return;
 	if (hCPU->sprNew.LR >= 0x01000000 && hCPU->sprNew.LR < 0x10000000)
@@ -571,8 +453,6 @@ void WeatherFn(PPCInterpreter_t* hCPU) {
 		memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 7, (char)newWeather, Main::baseAddr);
 		memInstance->memory_writeMemoryBE(hCPU->gpr[3] + 8, (char)newWeather, Main::baseAddr);
 	}
-
-	ProcessActorSpawnsInWeather(hCPU, hCPU->gpr[3]);
 }
 
 int LastCreated = 0;
@@ -651,6 +531,7 @@ void OnActorCreate(PPCInterpreter_t* hCPU)
 			if (Instances::PlayerList.find(spawnedPlayer) != Instances::PlayerList.end() && Instances::PlayerList[spawnedPlayer])
 			{
 				Instances::PlayerList[spawnedPlayer]->setAddress(hCPU->gpr[3]);
+				Instances::PlayerList[spawnedPlayer]->SpawnedAt = GetTickCount();
 				if (Instances::PlayerList[spawnedPlayer]->Equipment)
 					Instances::PlayerList[spawnedPlayer]->Equipment->SetWeapons(hCPU->gpr[3]);
 				if (Instances::PlayerList[spawnedPlayer]->Bumii)
@@ -728,27 +609,28 @@ void OnActorCreate(PPCInterpreter_t* hCPU)
 	}
 }
 
-namespace Main {
-	void OnLocalTeleport()
+// Local Link was erased (stage unload, fast travel, death, save reload): every remote actor and
+// every pending spawn belongs to the old stage.
+static void ResetSpawnStateForStageChange()
+{
+	Main::s_LocalLinkAddr = 0;
+	if (Game::GameInstance)
 	{
-		Logging::LoggerService::LogInformation("Local Link fast-travel detected! Flushing actor queues.", __FUNCTION__);
-		if (Game::GameInstance)
+		Game::GameInstance->setAddress(0);
+		Game::GameInstance->ClearQueue();
+	}
+	{
+		std::unique_lock<std::shared_mutex> qLock(queue_mutex);
+		queuedActors.clear();
+	}
+	Main::MarkStageUnstable(8000);
+	for (auto& pair : Instances::PlayerList)
+	{
+		if (pair.second)
 		{
-			Game::GameInstance->ClearQueue();
-		}
-		{
-			std::unique_lock<std::shared_mutex> qLock(queue_mutex);
-			queuedActors.clear();
-		}
-		s_hasCachedActorStorage = false;
-		for (auto& pair : Instances::PlayerList)
-		{
-			if (pair.second)
-			{
-				pair.second->setAddress(0);
-				if (pair.second->Status && pair.second->Status->isAddressSet())
-					pair.second->Status->set(0, __FUNCTION__);
-			}
+			pair.second->setAddress(0);
+			if (pair.second->Status && pair.second->Status->isAddressSet())
+				pair.second->Status->set(0, __FUNCTION__);
 		}
 	}
 }
@@ -772,26 +654,7 @@ void OnActorErase(PPCInterpreter_t* hCPU)
 	if (name.rfind("GameROMPlayer") != std::string::npos)
 	{
 		Logging::LoggerService::LogInformation("Link actor erased.", __FUNCTION__);
-		Main::s_LocalLinkAddr = 0;
-		if (Game::GameInstance)
-		{
-			Game::GameInstance->setAddress(0);
-			Game::GameInstance->ClearQueue();
-		}
-		{
-			std::unique_lock<std::shared_mutex> qLock(queue_mutex);
-			queuedActors.clear();
-		}
-		s_hasCachedActorStorage = false;
-		for (auto& pair : Instances::PlayerList)
-		{
-			if (pair.second)
-			{
-				pair.second->setAddress(0);
-				if (pair.second->Status && pair.second->Status->isAddressSet())
-					pair.second->Status->set(0, __FUNCTION__);
-			}
-		}
+		ResetSpawnStateForStageChange();
 	}
 
 	std::vector<std::string> BombChoices = {"CustomRemoteBomb", "CustomRemoteBomb2", "CustomRemoteBombCube", "CustomRemoteBombCube2"};
@@ -802,6 +665,14 @@ void OnActorErase(PPCInterpreter_t* hCPU)
 			int spawnedPlayer = std::stoi(name.substr(7));
 			if (Instances::PlayerList.find(spawnedPlayer) != Instances::PlayerList.end() && Instances::PlayerList[spawnedPlayer])
 			{
+				// A remote player we didn't ask to delete is being erased: the stage is unloading.
+				if (!Instances::PlayerList[spawnedPlayer]->DeleteRequested && Instances::PlayerList[spawnedPlayer]->baseAddr != 0)
+				{
+					Logging::LoggerService::LogInformation("Player " + std::to_string(spawnedPlayer) + " erased by the game: stage change, pausing spawns.", __FUNCTION__);
+					Instances::PlayerList[spawnedPlayer]->CheckInstantDeletion();
+					Main::MarkStageUnstable(8000, true);
+				}
+				Instances::PlayerList[spawnedPlayer]->DeleteRequested = false;
 				if (Instances::PlayerList[spawnedPlayer]->Status)
 					Instances::PlayerList[spawnedPlayer]->Status->set(0, __FUNCTION__);
 				Instances::PlayerList[spawnedPlayer]->setAddress(0);
@@ -981,64 +852,6 @@ void remoteBomb_onAICalc(PPCInterpreter_t* hCPU)
 	}
 }
 
-void remoteBomb_onAICalc2(PPCInterpreter_t* hCPU)
-{
-	if (!hCPU) return;
-	if (hCPU->sprNew.LR >= 0x01000000 && hCPU->sprNew.LR < 0x10000000)
-		hCPU->instructionPointer = hCPU->sprNew.LR;
-
-	std::vector<std::string> RealBombChoices = { "RemoteBomb", "RemoteBomb2", "RemoteBombCube", "RemoteBombCube2" };
-	
-	unsigned int aiPtr = hCPU->gpr[3];
-	unsigned int actPtr;
-	memInstance->memory_readMemoryBE(aiPtr, &actPtr, Main::baseAddr);
-
-	std::string name = Memory::read_string(Main::baseAddr + actPtr + 0x10, 50, __FUNCTION__);
-
-	bool explode = Memory::read_bytes(aiPtr + 0x78 + Main::baseAddr, 1, __FUNCTION__)[0] == 0x1 ? true : false;
-	bool cancel = Memory::read_bytes(aiPtr + 0x9C + Main::baseAddr, 1, __FUNCTION__)[0] == 0x1 ? true : false;
-
-	Main::BombSync->BombExplodeMutex.lock();
-
-	for (int i = 0; i < 4; i++)
-	{
-		if (name.rfind(RealBombChoices[i], 0) == 0)
-		{
-
-			if (explode)
-			{
-				Main::BombSync->BombMutex.lock();
-				Main::BombSync->Bombs[name] = 0;
-				Main::BombSync->BombMutex.unlock();
-			}
-			else if (cancel)
-			{
-				Main::BombSync->BombMutex.lock();
-				Main::BombSync->Bombs[name] = -1;
-				Main::BombSync->BombMutex.unlock();
-			}
-		}
-	}
-
-	Main::BombSync->BombExplodeMutex.unlock();
-
-	Main::BombSync->BombMutex.lock();
-	for (int i = 0; i < Main::BombSync->BombsToExplode.size(); i++)
-		if (Main::BombSync->BombsToExplode[i] == actPtr)
-		{
-			Memory::write_byte(aiPtr + 0x78 + Main::baseAddr, 0x1, __FUNCTION__);
-			Main::BombSync->BombsToExplode.erase(Main::BombSync->BombsToExplode.begin() + i);
-		}
-	
-	for (int i = 0; i < Main::BombSync->BombsToClear.size(); i++)
-		if (Main::BombSync->BombsToClear[i] == actPtr)
-		{
-			Memory::write_byte(aiPtr + 0x9C + Main::baseAddr, 0x1, __FUNCTION__);
-			Main::BombSync->BombsToClear.erase(Main::BombSync->BombsToClear.begin() + i);
-		}
-	Main::BombSync->BombMutex.unlock();
-}
-
 void timemgr_OnInit(PPCInterpreter_t* hCPU)
 {
 	if (!hCPU) return;
@@ -1102,6 +915,13 @@ void init() {
 
 	s_initialized = true;
 	Logging::LoggerService::LogInformation("init(): All HLE interceptors registered successfully.");
+}
+
+// memcmp that tolerates unmapped guest pages in the codecave scan range.
+static bool SafeMatch(const uint8_t* p, const char* str, size_t len)
+{
+	__try { return memcmp(p, str, len) == 0; }
+	__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
 static void BindSlot(uint64_t slotHost, uint32_t idx, const char* name)
@@ -1189,7 +1009,7 @@ void BindHLEAddresses()
 
 	for (size_t offset = 0; offset < 0x20000; offset += 4)
 	{
-		if (!foundActor && memcmp(pStart + offset, targetStrActor, sizeof(targetStrActor) - 1) == 0)
+		if (!foundActor && SafeMatch(pStart + offset, targetStrActor, sizeof(targetStrActor) - 1))
 		{
 			uint64_t modBase = Main::baseAddr + 0x01800000 + offset;
 			BindSlot(modBase + 0x2C, addr_OnActorCreate, "OnActorCreate (scan)");
@@ -1198,7 +1018,7 @@ void BindHLEAddresses()
 			foundActor = true;
 		}
 
-		if (!foundSpawn && memcmp(pStart + offset, targetStrSpawn, sizeof(targetStrSpawn) - 1) == 0)
+		if (!foundSpawn && SafeMatch(pStart + offset, targetStrSpawn, sizeof(targetStrSpawn) - 1))
 		{
 			if (offset >= 0x14)
 			{
@@ -1215,7 +1035,7 @@ void BindHLEAddresses()
 			}
 		}
 
-		if (!foundWeather && memcmp(pStart + offset, targetStrWeather, sizeof(targetStrWeather) - 1) == 0)
+		if (!foundWeather && SafeMatch(pStart + offset, targetStrWeather, sizeof(targetStrWeather) - 1))
 		{
 			if (offset >= 4)
 			{
@@ -1225,14 +1045,14 @@ void BindHLEAddresses()
 			}
 		}
 
-		if (!foundBomb && memcmp(pStart + offset, targetStrBomb, sizeof(targetStrBomb) - 1) == 0)
+		if (!foundBomb && SafeMatch(pStart + offset, targetStrBomb, sizeof(targetStrBomb) - 1))
 		{
 			uint64_t modBase = Main::baseAddr + 0x01800000 + offset;
 			BindSlot(modBase + 0x28, addr_RemoteBomb, "RemoteBomb (scan)");
 			foundBomb = true;
 		}
 
-		if (!foundTime && memcmp(pStart + offset, targetStrTime, sizeof(targetStrTime) - 1) == 0)
+		if (!foundTime && SafeMatch(pStart + offset, targetStrTime, sizeof(targetStrTime) - 1))
 		{
 			uint64_t modBase = Main::baseAddr + 0x01800000 + offset;
 			BindSlot(modBase + 0x24, addr_TimeMgr, "TimeMgr (scan)");
@@ -1243,10 +1063,12 @@ void BindHLEAddresses()
 			break;
 	}
 
-	static bool s_loggedScanResult = false;
-	if (!s_loggedScanResult)
+	// Log once the result changes (the first calls usually run before the codecaves are mapped).
+	static int s_lastScanMask = -1;
+	int scanMask = (foundActor << 0) | (foundSpawn << 1) | (foundWeather << 2) | (foundBomb << 3) | (foundTime << 4);
+	if (scanMask != s_lastScanMask)
 	{
-		s_loggedScanResult = true;
+		s_lastScanMask = scanMask;
 		std::stringstream ss;
 		ss << "BindHLEAddresses Scan Result: Actor=" << (foundActor ? "OK" : "MISSING")
 		   << ", Spawn=" << (foundSpawn ? "OK" : "MISSING")

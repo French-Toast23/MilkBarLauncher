@@ -16,7 +16,6 @@ namespace DataTypes
 		void SetPlayerNumber(int num)
 		{
 			PlayerNumber = num;
-			lastBase = "Jugador" + std::to_string(num) + "ModelNameLongForASpecificReasonHead";
 		}
 
 		bool Compare(CharacterEquipment newEquipment)
@@ -109,13 +108,13 @@ namespace DataTypes
 				FindArmorAddr(actorBaseAddr);
 			}
 
-			std::string pStr = std::to_string(PlayerNumber);
-			std::string BASE_FOLDER = "Jugador" + pStr + "ModelNameLongForASpecificReason";
-			std::string BASE_DEFAULT = "Jugador" + pStr + "ModelNameLongForASpecificReasonHead";
-			std::string CHEST_DEFAULT = "Jugador" + pStr + "ModelNameLongForASpecificReasonChest";
-			std::string UPPER_DEFAULT = "Jugador" + pStr + "ModelNameLongForASpecificReasonHelmet";
-			std::string LOWER_DEFAULT = "Jugador" + pStr + "ModelNameLongForASpecificReasonLower";
-			std::string HEAD_DEFAULT = "Jugador" + pStr + "ModelNameLongForASpecificReasonUpper";
+			// Every Jugador actor pack's ModelList uses these Jugador1* names, whatever the player number.
+			std::string BASE_FOLDER = "Jugador1ModelNameLongForASpecificReason";
+			std::string BASE_DEFAULT = "Jugador1ModelNameLongForASpecificReasonHead";
+			std::string CHEST_DEFAULT = "Jugador1ModelNameLongForASpecificReasonChest";
+			std::string UPPER_DEFAULT = "Jugador1ModelNameLongForASpecificReasonHelmet";
+			std::string LOWER_DEFAULT = "Jugador1ModelNameLongForASpecificReasonLower";
+			std::string HEAD_DEFAULT = "Jugador1ModelNameLongForASpecificReasonUpper";
 
 			std::string UPPER_DEFAULT_ARMOR = "MP_Armor_Default_Upper";
 			std::string LOWER_DEFAULT_ARMOR = "MP_Armor_Default_Lower";

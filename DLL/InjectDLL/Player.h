@@ -6,6 +6,14 @@
 #include "Extrapolation.h"
 #include "LocalInstance.h"
 #include "Vec3f_Operations.h"
+#include "AnimTables.h"
+#include "AnimNames.h"
+#include "AnimDebug.h"
+#include <set>
+#include <mutex>
+#include <deque>
+#include <algorithm>
+#include <cmath>
 
 namespace MemoryAccess
 {
@@ -22,6 +30,49 @@ namespace MemoryAccess
 		DWORD LastAttack = 0;
 		int LastAnimation = 0;
 		int ChargeAttackRetries = 0;
+		bool EquipmentEdited = false; // remote player changed equipment since last check
+		int animDiagWrites = 0;       // diagnostics: log the first few animation writes
+		bool DeleteRequested = false; // we set Status=1 ourselves (expected deletion)
+		bool LastIsEquipped = false;
+		bool HoldWritten = false;
+		int aliveMisses = 0;          // consecutive failed IsActorAlive checks
+		uint32_t LastUpperAnimation = 0; // last clip written to the upper-body event step
+		DWORD SpawnedAt = 0;          // tick of the last OnActorCreate for this player
+
+		// The game deleted our new actor almost immediately: the placement data copied from the game's
+		// last createActor_ call is unusable (seen 16 Nov 2026: memory reused by 'Kibako_Contain_0' at once).
+		// Drop it so the next spawn copies another actor's data.
+		void CheckInstantDeletion()
+		{
+			if (SpawnedAt != 0 && !DeleteRequested && GetTickCount() - SpawnedAt < 5000)
+			{
+				Logging::LoggerService::LogInformation("Player " + std::to_string(PlayerNumber) + " was deleted by the game right after spawning; discarding the spawn template.", __FUNCTION__);
+				Main::RequestFreshSpawnCapture();
+			}
+			SpawnedAt = 0;
+		}
+
+		// Animations that break when played alone on the Jugador (animation test, 15 Nov 2026):
+		// partial/additive layers (*_Upper, *_Add*, Charge_Move_*) freeze the rest of the body, and
+		// horse/motorcycle rider poses float or sink without a mount. Keep the previous full-body one instead.
+		static bool IsStandalonePlayable(uint32_t h)
+		{
+			std::string n = AnimNames::Lookup(h);
+			return n.find("_Upper") == std::string::npos && n.find("_Add") == std::string::npos &&
+				n.rfind("Charge_Move_", 0) != 0 && n.find("Horse") == std::string::npos &&
+				n.find("Motorcycle") == std::string::npos;
+		}
+
+		// Animation hash to play: the received one if the Jugador ASList has it, otherwise the last good
+		// one, otherwise idle (Nml_Wait). A hash missing from the ASList would leave the actor in T-pose.
+		uint32_t ResolveAnim(int received) const
+		{
+			if (received != 0 && AnimTables::IsValidAnim(UINT32(received)) && IsStandalonePlayable(UINT32(received)))
+				return UINT32(received);
+			if (LastAnimation != 0)
+				return UINT32(LastAnimation);
+			return AnimTables::IdleAnim;
+		}
 
 		Vec3f Speed = Vec3f(0, 0, 0);
 		Vec3f LastUpdatedPosition = Vec3f(0, 0, 0);
@@ -88,13 +139,52 @@ namespace MemoryAccess
 			HoldAddr = actorFlags.HoldFlag;
 			if (MapPin) MapPin->setAddress(actorFlags.MapPin, __FUNCTION__);
 			AttackAddr = actorFlags.AttackAnimation;
+			LastAnimation = 0; // flag storage may have moved: force the animation string to be rewritten
 			Mutex.unlock();
+		}
+
+		// True when baseAddr still points at our Jugador actor. Fast travel inside the open world
+		// destroys remote actors without going through the erase hooks, and the freed memory is
+		// reused by other actors (a fish ended up following Link), so the pointer must be re-checked.
+		bool IsActorAlive()
+		{
+			uint64_t addr = this->baseAddr;
+			if (addr == 0)
+				return false;
+			std::string name = Memory::read_string(Memory::getBaseAddress() + addr + 0x10, 16, __FUNCTION__);
+			return name == "Jugador" + std::to_string(PlayerNumber);
+		}
+
+		// Drops a stale actor pointer. Returns true if the actor is still valid.
+		bool ValidateActor()
+		{
+			if (this->baseAddr == 0)
+				return false;
+			if (IsActorAlive())
+			{
+				aliveMisses = 0;
+				return true;
+			}
+			// A single failed read must not orphan a live actor: require several misses in a row.
+			if (++aliveMisses < 3)
+				return true;
+			aliveMisses = 0;
+			Logging::LoggerService::LogInformation("Player " + std::to_string(PlayerNumber) + " actor is gone (name read '" +
+				Memory::read_string(Memory::getBaseAddress() + this->baseAddr + 0x10, 16, __FUNCTION__) + "'); dropping stale pointer.", __FUNCTION__);
+			CheckInstantDeletion();
+			if (!DeleteRequested)
+				Main::MarkStageUnstable(8000, true); // vanished without our request (a teleport also trips the jump detector)
+			DeleteRequested = false;
+			setAddress(0);
+			return false;
 		}
 
 		void setAddress(uint64_t addr)
 		{
 			Mutex.lock();
 			Actor::setAddress(addr);
+			LastAnimation = 0; // new (or no) actor: rewrite the animation flag on the next update
+			LastUpperAnimation = 0;
 			Mutex.unlock();
 		}
 
@@ -114,7 +204,7 @@ namespace MemoryAccess
 
 			LastServerPosition = PlayerData->Position;
 
-			if (this->baseAddr == 0 || !PlayerData->Updated)
+			if (this->baseAddr == 0 || !PlayerData->Updated || !ValidateActor())
 				return;
 
 			const std::string DEFAULT_ANIM = "Jugador" + std::to_string(PlayerNumber) + "_animationthing";
@@ -127,13 +217,15 @@ namespace MemoryAccess
 
 			bool IsAttack = false;
 
-			if (std::find(AttackAnimations.begin(), AttackAnimations.end(), PlayerData->Animation) != AttackAnimations.end()) 
+			// Only hashes that have an "Attack_<hash>" demo action can be played as attacks
+			if (std::find(AttackAnimations.begin(), AttackAnimations.end(), PlayerData->Animation) != AttackAnimations.end()
+				&& AnimTables::IsAttackAction(UINT32(PlayerData->Animation)))
 			{
 				LastAttack = GetTickCount();
 				IsAttack = true;
 			}
 
-			Teleport(PlayerData->Position, true);
+			PushSnapshot(PlayerData->Position);
 
 			Rotation1->set(PlayerData->Rotation1, __FUNCTION__);
 			Rotation2->set(PlayerData->Rotation2, __FUNCTION__);
@@ -169,39 +261,112 @@ namespace MemoryAccess
 			if (PlayerData->Animation == 835249056)
 				IsAttack = false;
 
+			// Diagnostics: log each received hash the Jugador ASList lacks once, so missing animations can be mapped.
+			if (PlayerData->Animation != 0 && !AnimTables::IsValidAnim(UINT32(PlayerData->Animation)))
+			{
+				static std::mutex s_rejMutex;
+				static std::set<uint32_t> s_rejected;
+				std::lock_guard<std::mutex> lock(s_rejMutex);
+				if (s_rejected.size() < 300 && s_rejected.insert(UINT32(PlayerData->Animation)).second)
+				{
+					std::stringstream ss;
+					ss << "Player " << PlayerNumber << " sent animation " << UINT32(PlayerData->Animation)
+				   << " " << AnimNames::Lookup(UINT32(PlayerData->Animation))
+					   << " not in Jugador ASList (attack action: " << (AnimTables::IsAttackAction(UINT32(PlayerData->Animation)) ? "yes" : "no")
+					   << "), keeping " << ResolveAnim(PlayerData->Animation);
+					Logging::LoggerService::LogInformation(ss.str(), "AnimFlagDiag");
+				}
+			}
+
+			// Animation test mode (anim_mode.txt = test): play the test animation and show its name as the tag.
+			const bool animTest = MemoryAccess::LocalInstance::AnimMode() == 3;
+			if (animTest)
+			{
+				AnimDebug::Tick();
+				IsAttack = false;
+				if (NameAddr >= 30000)
+					Memory::write_string(NameAddr, AnimDebug::Label(), 32, __FUNCTION__);
+				if (this->DispName && this->DispName->isAddressSet())
+					this->DispName->set(true, __FUNCTION__);
+			}
+			const uint32_t wantAnim = animTest ? AnimDebug::Current() : ResolveAnim(PlayerData->Animation);
+
 			if (this->Status && this->Status->isAddressSet() && this->Status->get(__FUNCTION__) != 1)
 			{
 				if (IsAttack && (IsCharge || PlayerData->Animation != LastAnimation))
 				{
 					this->Status->set(2, __FUNCTION__);
+					std::string attackName = "Attack_" + std::to_string(UINT32(PlayerData->Animation));
 					if (AttackAddr >= 30000)
-						Memory::write_string(AttackAddr, "Attack_" + std::to_string(UINT32(PlayerData->Animation)), DEFAULT_ATTACK.size(), __FUNCTION__);
+						Memory::write_string(AttackAddr, attackName, DEFAULT_ATTACK.size(), __FUNCTION__);
+					MemoryAccess::LocalInstance::WriteEvflAnimation(PlayerNumber, attackName, 1);
 				}
 				else
 				{
 					this->Status->set(0, __FUNCTION__);
-					if (AnimAddr >= 30000)
+					uint32_t animVal = wantAnim;
+					if (animVal != UINT32(LastAnimation))
 					{
-						uint32_t animVal = PlayerData->Animation != 0 ? UINT32(PlayerData->Animation) : 789467239;
-						if (animVal != UINT32(LastAnimation))
+						std::string animName = "Anim_" + std::to_string(animVal);
+						// legacy target (event-flow file buffer) + the big-endian runtime copy the game runs
+						if (AnimAddr >= 30000)
+							Memory::write_string(AnimAddr, animName, DEFAULT_ANIM.size(), __FUNCTION__);
+						MemoryAccess::LocalInstance::WriteEvflAnimation(PlayerNumber, animName, 0);
+						if (animDiagWrites < 3)
 						{
-							Memory::write_string(AnimAddr, "Anim_" + std::to_string(animVal), DEFAULT_ANIM.size(), __FUNCTION__);
+							animDiagWrites++;
+							std::stringstream ss;
+							ss << "Player " << PlayerNumber << " anim write '" << animName << "'";
+							{
+								std::lock_guard<std::mutex> lock(MemoryAccess::LocalInstance::EvflMutex);
+								auto& t = MemoryAccess::LocalInstance::EvflAnimStrings;
+								if (t.count(PlayerNumber))
+									for (uint64_t a : t[PlayerNumber])
+										ss << " runtime@0x" << std::hex << a << "='" << Memory::read_string(a, 40, __FUNCTION__) << "'";
+								else
+									ss << " (no runtime copy found yet)";
+							}
+							Logging::LoggerService::LogInformation(ss.str(), "AnimFlagDiag");
 						}
+					}
+				}
+
+				// Upper-body layer (event step "Jugador<N>_upperanimthing", TargetIndex 2): the sender's overlay
+				// clip (shield, horse call, bow draw...). Without one, the upper body plays the same clip as the
+				// body (or the attack clip during attacks) so it simply follows.
+				uint32_t upperVal;
+				if (!animTest && PlayerData->UpperAnimation != 0 && AnimTables::IsValidAnim(UINT32(PlayerData->UpperAnimation)))
+					upperVal = UINT32(PlayerData->UpperAnimation);
+				else if (IsAttack && AnimTables::IsValidAnim(UINT32(PlayerData->Animation)))
+					upperVal = UINT32(PlayerData->Animation);
+				else
+					upperVal = wantAnim;
+				if (upperVal != LastUpperAnimation)
+				{
+					LastUpperAnimation = upperVal;
+					MemoryAccess::LocalInstance::WriteEvflAnimation(PlayerNumber, "Anim_" + std::to_string(upperVal), 3);
+					static int s_upperLogs = 0;
+					if (PlayerData->UpperAnimation != 0 && s_upperLogs < 200)
+					{
+						s_upperLogs++;
+						Logging::LoggerService::LogInformation("Player " + std::to_string(PlayerNumber) + " upper body: " +
+							AnimNames::Lookup(upperVal), "AnimFlagDiag");
 					}
 				}
 			}
 
-			uint32_t effectiveAnim = PlayerData->Animation != 0 ? UINT32(PlayerData->Animation) : 789467239;
+			uint32_t effectiveAnim = wantAnim;
 			if (effectiveAnim != UINT32(LastAnimation))
 			{
 				static int s_loggedAnimCount = 0;
-				if (s_loggedAnimCount < 50)
+				if (s_loggedAnimCount < 400)
 				{
 					s_loggedAnimCount++;
 					std::stringstream ss;
 					ss << "Player " << (int)PlayerNumber << " animation changed: "
 					   << LastAnimation << " -> " << effectiveAnim
-					   << " (Anim_" << std::to_string(effectiveAnim) << ")";
+					   << " (Anim_" << std::to_string(effectiveAnim) << " " << AnimNames::Lookup(effectiveAnim)
+					   << ", received " << AnimNames::Lookup(UINT32(PlayerData->Animation)) << ")";
 					Logging::LoggerService::LogInformation(ss.str());
 				}
 			}
@@ -210,7 +375,20 @@ namespace MemoryAccess
 
 			if (HoldAddr >= 30000)
 				Memory::write_string(HoldAddr, PlayerData->IsEquipped ? "Hold" : "Equip", 6, __FUNCTION__);
-			this->Equipment->Changed = Equipment->Compare(PlayerData->Equipment);
+			if (PlayerData->IsEquipped != LastIsEquipped || !HoldWritten)
+			{
+				MemoryAccess::LocalInstance::WriteEvflAnimation(PlayerNumber, PlayerData->IsEquipped ? "Hold" : "Equip", 2);
+				LastIsEquipped = PlayerData->IsEquipped;
+				HoldWritten = true;
+			}
+			{
+				CharacterEquipment before = *this->Equipment->LastKnown;
+				this->Equipment->Changed = Equipment->Compare(PlayerData->Equipment);
+				const CharacterEquipment& after = *this->Equipment->LastKnown;
+				if (before.Head != after.Head || before.Upper != after.Upper || before.Lower != after.Lower ||
+					before.Sword != after.Sword || before.Shield != after.Shield || before.WType != after.WType || before.Bow != after.Bow)
+					EquipmentEdited = true;
+			}
 			AtkUp = PlayerData->AtkUp;
 			Health = PlayerData->Health;
 
@@ -235,7 +413,7 @@ namespace MemoryAccess
 
 			UpdateName(DispNames);
 			if (this->Status && this->Status->isAddressSet())
-				this->Status->set(1, __FUNCTION__);
+				{ DeleteRequested = true; this->Status->set(1, __FUNCTION__); }
 
 		}
 
@@ -243,6 +421,112 @@ namespace MemoryAccess
 		{
 			if (NameAddr >= 30000)
 				Memory::write_string(NameAddr, newName, 32, __FUNCTION__);
+		}
+
+		// ---- Snapshot interpolation (replaces the old speed-guess extrapolation, which overshot and snapped back).
+		// Every received position is stored with its arrival time. The remote player is drawn INTERP_DELAY_MS in the
+		// past, blended between the two real positions around that moment. When packets are late it keeps moving
+		// along the last direction for at most MAX_EXTRAPOLATE_MS, then waits. Jumps over SNAP_DISTANCE (fast travel,
+		// respawn) are applied instantly.
+		struct PosSnapshot { double Time; Vec3f Pos; };
+		// Milliseconds from the high-resolution counter. GetTickCount only advances every ~15.6 ms, which made the
+		// blend factor jump in steps (visible at 60-120 FPS with FPS++).
+		static double NowMs()
+		{
+			static LARGE_INTEGER freq = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }();
+			LARGE_INTEGER c; QueryPerformanceCounter(&c);
+			return double(c.QuadPart) * 1000.0 / double(freq.QuadPart);
+		}
+		std::deque<PosSnapshot> Snapshots;
+		std::mutex SnapshotMutex;
+		static constexpr double INTERP_DELAY_MS = 100.0;
+		static constexpr double MAX_EXTRAPOLATE_MS = 150.0;
+		static constexpr float SNAP_DISTANCE = 25.0f;
+
+		static float Dist(Vec3f a, Vec3f b) // Vec3f's accessors aren't const, so take copies
+		{
+			float dx = a.x() - b.x(), dy = a.y() - b.y(), dz = a.z() - b.z();
+			return sqrtf(dx * dx + dy * dy + dz * dz);
+		}
+
+		static Vec3f Lerp(Vec3f a, Vec3f b, float t)
+		{
+			return Vec3f(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t, a.z() + (b.z() - a.z()) * t);
+		}
+
+		void PushSnapshot(Vec3f pos)
+		{
+			std::lock_guard<std::mutex> lock(SnapshotMutex);
+			double now = NowMs();
+			if (!Snapshots.empty() && Snapshots.back().Pos.x() == pos.x() && Snapshots.back().Pos.y() == pos.y() && Snapshots.back().Pos.z() == pos.z())
+			{
+				Snapshots.back().Time = now; // standing still: keep one sample, refreshed
+				if (Snapshots.size() >= 2 && Snapshots[Snapshots.size() - 2].Pos.x() == pos.x() && Snapshots[Snapshots.size() - 2].Pos.y() == pos.y() && Snapshots[Snapshots.size() - 2].Pos.z() == pos.z())
+					return;
+				Snapshots.push_back({ now, pos });
+				return;
+			}
+			Snapshots.push_back({ now, pos });
+			while (Snapshots.size() > 64)
+				Snapshots.pop_front();
+		}
+
+		void ClearSnapshots()
+		{
+			std::lock_guard<std::mutex> lock(SnapshotMutex);
+			Snapshots.clear();
+		}
+
+		PosSnapshot PrevSnapshot{ 0, Vec3f(0, 0, 0) }; // last sample dropped from the buffer (for extrapolation)
+
+		// Position to draw now. False when nothing has been received yet.
+		bool SamplePosition(Vec3f& out)
+		{
+			std::lock_guard<std::mutex> lock(SnapshotMutex);
+			if (Snapshots.empty())
+				return false;
+
+			double renderTime = NowMs() - INTERP_DELAY_MS;
+
+			// drop samples entirely behind the render time, keeping the one just before it
+			while (Snapshots.size() >= 2 && Snapshots[1].Time <= renderTime)
+			{
+				PrevSnapshot = Snapshots.front();
+				Snapshots.pop_front();
+			}
+
+			const PosSnapshot& a = Snapshots[0];
+			if (renderTime <= a.Time)
+			{
+				out = a.Pos; // render time is before the oldest sample
+				return true;
+			}
+
+			if (Snapshots.size() == 1)
+			{
+				// newest sample is already in the past: packets are late. Continue along the last movement
+				// for a short while, then hold.
+				double span = a.Time - PrevSnapshot.Time;
+				if (PrevSnapshot.Time != 0 && span > 0 && Dist(PrevSnapshot.Pos, a.Pos) <= SNAP_DISTANCE)
+				{
+					double late = (std::min)(renderTime - a.Time, MAX_EXTRAPOLATE_MS);
+					out = Lerp(PrevSnapshot.Pos, a.Pos, float(1.0 + late / span));
+				}
+				else
+					out = a.Pos;
+				return true;
+			}
+
+			const PosSnapshot& b = Snapshots[1];
+			if (Dist(a.Pos, b.Pos) > SNAP_DISTANCE)
+			{
+				out = b.Pos; // a teleport, not movement
+				return true;
+			}
+			double span = b.Time - a.Time;
+			float t = span > 0 ? float((renderTime - a.Time) / span) : 1.0f;
+			out = Lerp(a.Pos, b.Pos, (std::min)((std::max)(t, 0.0f), 1.0f));
+			return true;
 		}
 
 		void Teleport(Vec3f newPosition, bool Save = false)
@@ -333,8 +617,9 @@ namespace MemoryAccess
 
 		void Disconnect()
 		{
+			bool wasConnected = connected;
 			connected = false;
-			if (PlayerNumber != 32)
+			if (wasConnected && PlayerNumber != 32)
 			{
 				Logging::LoggerService::LogInformation("Player " + Name + " left.", __FUNCTION__);
 				Memory::MessagerService::AddMessage("Player " + Name + " left.");
@@ -344,7 +629,7 @@ namespace MemoryAccess
 			this->baseAddr = 0;
 			//this->Delete->set(true, __FUNCTION__);
 			if (this->Status && this->Status->isAddressSet())
-				this->Status->set(1, __FUNCTION__);
+				{ DeleteRequested = true; this->Status->set(1, __FUNCTION__); }
 			Mutex.unlock();
 			this->RunThread = false;
 			if (pThread.joinable())
@@ -353,6 +638,8 @@ namespace MemoryAccess
 
 		void UpdateName(bool DispNames)
 		{
+			if (MemoryAccess::LocalInstance::AnimMode() == 3)
+				return; // animation test mode owns the name tag
 			std::string ActualName = this->Name;
 
 			if (Name.size() > 19)
@@ -374,7 +661,7 @@ namespace MemoryAccess
 
 		void ManageBomb(Vec3f BombData, int bomb)
 		{
-			BombAccess* Bomb = new BombAccess();
+			BombAccess* Bomb = nullptr;
 			std::string BombName;
 
 			if (bomb == 0)
@@ -397,6 +684,9 @@ namespace MemoryAccess
 				Bomb = this->BombCube2;
 				BombName = "CustomRemoteBombCube2";
 			}
+
+			if (!Bomb)
+				return;
 
 			BombStatus newStatus = Deallocated;
 			BombStatus playerStatus = Bomb->getStatus();

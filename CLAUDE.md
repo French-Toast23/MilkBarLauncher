@@ -23,7 +23,22 @@
 
 ---
 
-## 2. Exhaustive Bug Analysis & Confirmed Root Causes
+## 2. Upstream Reference Sources & Toolchain Ecosystem
+
+The following open-source codebases and reverse-engineering tools provide essential ground-truth logic, file formats, and architectural references for this project:
+
+| Tool / Project | Official Repository | Project Role & Specific Use Case |
+| :--- | :--- | :--- |
+| **Cemu (2.0 / 2.6 branch)** | [cemu-project/Cemu](https://github.com/cemu-project/Cemu) | **Target Emulation Core & PPC JIT Engine**.<br/>Used to analyze:<br/>1. **HLE Interception System** (`src/Cafe/OS/libs/coreinit/`, `src/Cafe/OS/libs/osLib.cpp`): Analyzed `osLib_registerHLEFunction` and `osLib_getHLEFunctionAddress` to verify that Cemu returns internal 32-bit table indices (`0xb8`, `0xb9`), dispatched via PowerPC opcode 1: `(0x04000000 \| idx)`.<br/>2. **Graphic Pack Codecave Loader** (`src/Cafe/GraphicPack/`): Examined how `.origin = codecave` patches are assembled and mapped into guest virtual memory starting at `0x01800000`, enabling our pure dynamic signature scanner.<br/>3. **CPU Recompiler & Exception Handling** (`src/Cafe/CPU/`): Used to debug crash logs, PPC register state dumps (`sprNew.LR`, `hCPU->instructionPointer`), memory protection boundaries (`VirtualQuery`), and Vulkan pipeline caching. |
+| **UKMM (U-King Mod Manager)** | [NiceneNerd/ukmm](https://github.com/NiceneNerd/ukmm) | **Modern BotW Mod Packaging & Merging Core (Rust)**.<br/>Used for:<br/>1. High-speed, conflict-free merging of game archives (`Bootup.pack`, `TitleBG.pack`).<br/>2. Reference implementation for merging `ActorInfo.product.sbyml`, preserving strict ascending CRC32 order and correct BYML primitive node types (`0xD0` for signed `S32`, `0xD1` for unsigned `U32`).<br/>3. Understanding modern BNP mod structure and graphic pack export standards. |
+| **BCML (BotW Cross-Platform Mod Loader)** | [NiceneNerd/BCML](https://github.com/NiceneNerd/BCML) | **Legacy Reference Implementation for BotW Mod Merging (Python)**.<br/>Used for:<br/>1. The legacy codebase upon which Milk Bar Launcher's `BcmlSettings.cs` and `GameFilesModifier.cs` were designed.<br/>2. Reference merge logic for `GameData` flags (`gamedata.ssarc`, `savedataformat.ssarc` preservation), AAMP deep merging (`aslist.aamp`, `deepmerge.aamp`), and custom eventflows.<br/>3. Reverse-engineering why custom multiplayer flags require `IsSave: False` to avoid corrupting `game_data.sav` save files. |
+| **oead** | [zeldamods/oead](https://github.com/zeldamods/oead) | **Nintendo File Format Library (C++ / Python)**.<br/>Used for parsing, serializing, and validating Nintendo first-party file formats: **BYML**, **AAMP**, **SARC**, and **Yaz0** compression. Critical for generating valid `ActorInfo.product.sbyml` files with 7,973 actors that pass BotW's in-engine binary search without crashing. |
+| **rstb** | [zeldamods/rstb](https://github.com/zeldamods/rstb) | **Resource Size Table (RSTB) Calculator (C++ / Python)**.<br/>Used to calculate precise decompressed heap allocation limits in `ResourceSizeTable.product.srsizetable`. Prevents the catastrophic heap overflow crash (`0xc0000005` at `IP 0x03208cec`) when `Bootup.pack` and `gamedata.ssarc` are expanded with multiplayer actor and flag definitions. |
+| **botw-anim-extractor / BotW Havok Tools** | [ArchLeaders/botw-havok](https://github.com/ArchLeaders/botw-havok) | **Animation & Physics Reverse-Engineering**.<br/>Used to inspect BotW's animation playback structures (`CustomAnimations.sbfres`, `Player_Animation_NoFace.sbfres`), bone skeletons, and ActionSequence hash identifiers (`Anim_<CRC32 of the animation name>`, e.g. `Anim_2327397999` = `Nml_Wait` idle). |
+
+---
+
+## 3. Exhaustive Bug Analysis & Confirmed Root Causes
 
 ### A. HLE Hook Dispatch Architecture & Crash `0xc0000005` at `IP = 0x000000b8`
 * **Symptom**: Game crashed ~1 second after shader compilation finished, or custom hooks (`OnActorCreate`, `fnCallMain`, `WeatherSync`) never executed.
@@ -273,15 +288,46 @@ Copy-Item "Build\Resources\InjectDLL.dll" "WPF .NET 6\Breath of the Wild Multipl
 
 ---
 
-### N. Teleportation / Fast-Travel Crash & Remote Player T-Pose Fix
-- **Problem 1 (Fast-Travel Crash)**: Teleporting triggered an access violation (`0xc0000005`) at PPC `0x03948074` (`lwz r11, 0x84(r10)` where `r10 = 0x0`). During scene unload/reload transitions, the stage actor factory was NULL (`0x00000000`). Custom actor dispatch (`createActor_`) called during this transition crashed Cemu immediately with `FAST_FAIL_FATAL_APP_EXIT` / `0xc0000005`.
-- **Problem 2 (Actor Recreation Death Loop)**: In `Player.cpp` / `EquipmentAccess.h`, whenever armor addresses were resolving or `SetupFailed` was set, `action = ActCreate` was scheduled in an endless loop, deleting and recreating the player actor every few seconds even when the player should not exist or was mid-transition.
-- **Problem 3 (Remote Player T-Pose)**: The ActionSequence animation pointer chain (`0x448, 0x4C, 0x10, 0x19C, 0x38, 0xA0, 0x10, -0x5C`) changes dynamically as Link changes states. Caching the pointer address once locked in stale memory. Additionally, when `PlayerData->Animation == 0`, `Player.h` never initialized `AnimAddr`, leaving the fallback string `"Jugador1_animationthing"`, which caused BotW to fall back to the bind T-pose.
-- **Fix**:
-  1. **Stage Readiness Inspection (`Memory::IsStageReady()`)**: Reads `0x1047c244` (Actor System Manager) -> `+0x80` -> `+0x0C` (Stage Actor Factory) -> `+0x84` (VTable). If any pointer is NULL, below `0x10000000`, or the vtable is unmapped, `createActor_` dispatch is blocked, actor queues are flushed, and registers reset.
-  2. **Fast-Travel Jump Detection (`Main::OnLocalTeleport()`)**: Added frame displacement check in `get_characterData()`. When Link's displacement $> 100.0\text{ units}$ in one frame, actor queues are cleared and remote player addresses are reset to 0 to prevent lingering in deallocated scenes.
-  3. **Decoupled Equipment Updates**: In `Player::PThread()`, equipment changes call `SetArmor(this->baseAddr)` and `SetWeapons(this->baseAddr)` directly in-place without deleting or recreating the actor.
-  4. **Dynamic Animation Resolution (`getAnimation()`)**: Dereferences the active ActionSequence controller dynamically every frame. When `Animation == 0` (idle stance), `Player.h` writes `"Anim_789467239"` (`SetUp` idle stance) instead of leaving it uninitialized, ensuring remote players never default to T-pose.
+### N. Host Crash on Continue (`0xc0000005` in `InjectDLL.dll+0x24c7d`) & Joinable `std::thread` Lifecycle
+* **Symptom**: When Instance 2 connected to Instance 1 (Host) and selected "Continue" from the BotW main menu, Instance 1 crashed immediately with an access violation (`0xc0000005`) in `InjectDLL.dll`.
+* **Minidump (`Cemu.exe.13856.dmp`) & Log Analysis**:
+  - Crash occurred inside `BigEndian<float>::get` at RVA `0x24c7d` with `RCX = 0x0000000000000000` (dereferencing a NULL `this` pointer).
+  - Call stack: `mainServerLoop()` -> `GameInstance->World->set(serverResponse->WorldData)` -> `WorldObj::set()` / `WorldObj::get()`.
+  - In `LocalInstance.h`, `WorldObj::ReadableTime` and `WritableTime` are dynamically populated only when `timemgr_OnInit` fires from the `ukl_timemgrinterceptor` HLE hook.
+  - If a client connects before `timemgr_OnInit` completes or in a scene where it hasn't fired yet, `ReadableTime` and `WritableTime` remained uninitialized pointers (`nullptr`). Calling `get()` or `set()` on them called `BigEndian<float>::get(RCX=0)`, crashing Cemu immediately.
+  - Concurrently, in `Player::Connect()`, reassigning `pThread = std::thread(&Player::PThread, this)` while `pThread` was already running/joinable threw an unhandled `std::terminate()`.
+* **Fixes Implemented**:
+  1. In `LocalInstance.h`, explicitly initialized all `WorldObj` pointer members (`Day = nullptr; WritableTime = nullptr; ReadableTime = nullptr;`) and `LocalInstance` pointer members (`Health`, `Defense`, `AtkUp`, `IsEquipped`, `Location`, `Equipment`, `Animation`, `NotPaused`) to `nullptr`.
+  2. Guarded `WorldObj::get()` and `WorldObj::set()` with defensive NULL and `isAddressSet()` checks returning safe defaults (`0` and `0.0f`).
+  3. Guarded `dllmain_Functions.cpp:mainServerLoop` against NULL `World` and `Location` before attempting time sync.
+  4. In `Player.h`, added `if (connected) return;` at entry of `Connect()`. Added `if (pThread.joinable()) pThread.join();` before assigning a new thread in `Connect()` and inside `Disconnect()`. Added `~Player()` destructor calling `Disconnect()`.
+
+---
+
+### O. Stage Readiness & "Can't See Players Anymore" Spawning Freeze
+* **Symptom**: After applying earlier crash guards, neither instance crashed, but remote players stopped appearing entirely ("can't see players anymore"). The spawn thread ceased queueing actors.
+* **Root Cause**:
+  - `Memory::IsStageReady()` checked `base + 0x1047c244`.
+  - In BotW EU v208 (`0x6267BFD0`), section 4 (`.data`) ends at `0x104697a7` and section 5 (`.bss`) starts at `0x104855e0`. Address `0x1047c244` falls into an unmapped hole in memory, constantly returning `0`.
+  - As a result, `IsStageReady()` returned `false` 100% of the time, permanently blocking `Player::PThread()`, `RequestCreate()`, and `ProcessActorSpawnsInWeather()`.
+* **Fixes Implemented**:
+  1. Replaced the unmapped `0x1047c244` check in `Memory::IsStageReady()` with `Main::s_LocalLinkAddr != 0 && getBaseAddress() != 0`. When Link's actor pointer is alive in the scene graph, the stage is guaranteed loaded and active.
+  2. Created `IsActorManagerReady(uint32_t f_r3, uint64_t baseAddr)` in `SpawningVariables.h` to inspect `f_r3` -> `+0x80` -> `+0x0C` -> `+0x84` directly during actor dispatch, eliminating the PPC crash at `0x03948074` without blocking general player coordination.
+
+---
+
+### P. Confirmed Dual-Instance Coexistence & T-Pose Investigation
+* **Verified Milestone**:
+  - Both Cemu 2.6 instances run side-by-side at 54-57 FPS on Vulkan on an AMD GPU.
+  - Instance 1 does not crash when Instance 2 connects and presses Continue.
+  - Both players spawn and can see each other's 3D character models in real time on the Great Plateau Resurrection Tower without crashing (`media_1794690243707_acf0f909.jpg`).
+* **Current Observed Behavior (T-Pose)**:
+  - The remote player model renders in a bind T-pose (arms outstretched horizontally).
+  - Root Cause Analysis:
+    1. In `Player.h`, when `this->baseAddr == 0`, `Player::set()` returns at line 117 before writing `AnimAddr`.
+    2. When `AnimAddr` is not written, it retains the default eventflow string `"Jugador1_animationthing"`.
+    3. Because `"Jugador1_animationthing"` is not a valid ActionSequence in `CustomAnimations.sbfres`, BotW falls back to the actor's default bind skeleton pose (T-pose).
+    4. To resolve this, `Player::set()` must ensure `AnimAddr` is always populated with a valid animation (e.g. `"Anim_2327397999"` = `Nml_Wait` idle; `789467239` is `Sword_Attack_Jump_F_St`, see section R) regardless of actor resolution state, and dynamic ActionSequence pointer extraction in `LocalInstance::getAnimation()` must map Link's movement states (idle, walk, run, jump, attack).
 
 ---
 
@@ -289,6 +335,141 @@ Copy-Item "Build\Resources\InjectDLL.dll" "WPF .NET 6\Breath of the Wild Multipl
 ```powershell
 dotnet build "WPF .NET 6\Breath of the Wild Multiplayer\Breath of the Wild Multiplayer.csproj" -c Release
 ```
+
+---
+
+### Q. Self-Contained Installer & Uninstaller (no BCML / UKMM)
+* **Goal**: Install the mod from the launcher alone, and revert every change it made.
+* **`ModPack/` (repo root, copied to the launcher output)**: the full graphic pack. It contains `rules.txt`, all `patch_*.asm`, `content/` (Jugador/CustomRemote actor packs, events, `CustomAnimations.sbfres`, merged `ActorInfo.product.sbyml`, expanded RSTB) and `merge/` (`Bootup.pack` holds only the 13 entries the mod changes; `TitleBG.pack` is the BNP diff). No full Nintendo archives are shipped. The old `patches/` folder was removed.
+* **`Source files/ModInstaller.cs`**:
+  - `Install()`:
+    - Copies `ModPack` into `<Cemu user data>/graphicPacks/BreathOfTheWild_Multiplayer`. The user data folder is `%APPDATA%/Cemu`, or `portable/` next to Cemu.exe.
+    - Merges `merge/*.pack` on top of the player's own v208 `Pack/Bootup.pack` / `Pack/TitleBG.pack`. For TitleBG, actor packs are merged per inner file.
+    - Copies `PauseMenuPlayer.sbactorpack` from the update.
+    - Enables the pack and Extended Memory in `settings.xml`.
+  - The game dump (mlc01) is only read, never written.
+  - A pre-existing pack folder that the launcher did not install is moved to `%APPDATA%/BOTWM/Backups` and restored on uninstall.
+  - Every change is recorded in `%APPDATA%/BOTWM/install_manifest.json`.
+  - `settings.xml` is edited as text, touching only our own `<Entry>` line or `disabled` attribute. Uninstall therefore restores it byte for byte (verified).
+  - `Uninstall()` deletes the pack, restores the backed-up pack, reverts the `settings.xml` edits, and deletes the backups and manifest. Cemu must be closed for both operations.
+  - `Repair()` runs before each launch (`BcmlSettings.ValidateAndFixGraphicPack`) and re-copies changed bundle files.
+* **Launcher**:
+  - Connecting auto-installs the mod if it's missing.
+  - The Settings panel has "Install / Repair" and "Uninstall" buttons.
+  - All BCML `settings.json` lookups were removed. `MergedDir` now always points at the installer's pack.
+* **Multiple Cemu installs (16 Nov 2026)**: the launcher has up to 4 Cemu slots, implemented in `Source files/CemuProfiles.cs` and stored in `%APPDATA%/BOTWM/cemu_profiles.json`, which all launchers share.
+  - Each launcher window picks its own slot with the `<` / `>` selector above Connect (`CemuProfiles.Active`, per process). `BcmlSettings.ResolveCemuDir()` returns the active slot, and auto-detection is used only while no slot is set.
+  - Settings has four "Cemu N" rows: click to choose a `Cemu.exe`, right-click to clear. Install / Repair / Uninstall act on the active slot.
+  - Each Cemu user data folder has its own manifest and backups: `install_manifest_<sha1-8>.json` and `Backups_<sha1-8>`. `%APPDATA%/Cemu` keeps the original names.
+  - Install and Uninstall only require that slot's Cemu to be closed. Connect refuses a slot whose Cemu is already running.
+  - Extra Cemus must be **portable** (a `portable` folder next to `Cemu.exe`). Otherwise they all share `%APPDATA%/Cemu`: `settings.xml`, `log.txt`, caches and saves.
+  - Picking a non-portable Cemu offers `CemuProfiles.MakePortable()`. It copies settings (minus our pack entry, `mlc_path` cleared), profiles, saves, the transferable shader cache and downloaded graphic packs, and adds a junction for `mlc01/usr/title`.
+* **Several players on one PC**: Connect opens `PlayerSetupWindow`, which asks for 1-4 players and a Cemu slot per player.
+  - Player 1 plays in this launcher. Each other player gets a new launcher process started with `--cemu-slot N --connect <base64 JSON server>` (`LaunchArgs`), which sets its slot for that process only and connects automatically.
+  - A launcher drives exactly one Cemu (one DLL, one pipe, one overlay).
+  - Injection now targets the Cemu process the launcher started (`InjectToSpecificProcess`), so launchers starting Cemus together can't grab each other's.
+  - Not tested in game yet (16 Nov 2026).
+* **Portability rule**: never hardcode paths to a specific PC. Resolve everything at runtime (`SpecialFolder`, `AppContext.BaseDirectory`, Cemu settings).
+
+### R. Remote Player Model, Duplicate Spawn & Animation Fixes
+* **Wrong model (player 2+)**: every `Jugador<N>` actor's ModelList uses the `Jugador1ModelNameLongForASpecificReason*` names. A previous change used `Jugador<N>...` in `EquipmentAccess`, so armor was never found or applied. Reverted to the constant `Jugador1*` names.
+* **Armor never shown**: model strings are read when the actor is created. As in the original mod, `Player::PThread` respawns the actor after the armor strings are written, capped at 2 respawns per equipment change.
+* **Duplicate spawn (one instance saw nobody)**: a create was re-queued 3 s later while the first was still in flight. `PendingCreateSince` now blocks re-queueing for up to 10 s, until `OnActorCreate` binds the actor.
+* **Sliding / no animation**: the sender sent `0` whenever the ActionSequence pointer chain was briefly unreadable, so the receiver snapped to idle. `LocalInstance::getAnimation()` now returns the last good value, and `Player::set` keeps the previous animation on `0`.
+* **Spawn blocked entirely** (commit `2bfa4f5`): the `IsActorManagerReady(f_r3)` gate used offsets nothing backs up and always failed. Removed. Captured `createActor_` registers are invalidated when Link is erased (stage change) instead.
+* **Fast travel inside MainField does not erase or recreate `GameROMPlayer`**, so the Link-erase reset never runs. Remote Jugador actors are destroyed by the stage unload without hitting our erase hooks.
+  - Before this fix, the stale `Player::baseAddr` pointed at freed memory reused by other actors: a Hyrule Bass followed Link.
+  - Before this fix, the captured `createActor_` registers from before the teleport were reused, which spawned random actors.
+  - Fix: `Player::ValidateActor()` re-reads the actor name (`baseAddr+0x10` must equal `Jugador<N>`) each tick and in `set()`, and drops stale pointers.
+  - Fix: `queueActor()` sets `s_needFreshCapture`, so every spawn waits for a fresh capture of the game's own `createActor_` call.
+* **Deleting a Jugador through `Status = 1` does not work**: "Could not delete player" every time. Respawning to apply armor left the old actor uncontrolled, sliding in T-pose. If the old actor is still alive after the 5 s timeout, the thread now keeps controlling it and does not spawn a duplicate.
+* **Deleting via `Status = 1` does work**, but the game skips our erase hooks for it. `ValidateActor()` now detects the deletion, so the armor respawn completes (verified in a two-player run on 15 Nov 2026).
+* **Jugador1 stuck in T-pose (tests on 15 Nov 2026)**:
+  - `Jugador<N>_animationthing` is not a GameData flag value. It's a placeholder string in the Jugador event-flow script loaded in memory (BFEVFL with `DIC ` tables). The DLL overwrites it with `Anim_<hash>`.
+  - A read-only memory scan of both Cemu instances showed the DLL overwrites the right placeholder for the remote player (player 1 and player 2 alike). So the write address was not the problem, and `FixAnimationFlagsExact()` (built on the GameData theory) corrects nothing. It's kept only for its `AnimFlagDiag` log lines.
+  - Real difference: in the BNP, only `Jugador2.sbactorpack` used its own AI program and `LODUser: NoCalcSkipForEachFrame` (`DisableOutScreenCalcStop`, `DisableCalcSkipFrame: 4`). The other 31 used `MultiplayerAI` with `LODUser: Dummy`, and only player 2 ever animated.
+  - All 31 packs were rebuilt: `MultiplayerAI.baiprog` content = Jugador2's AI (no player-specific strings), plus `NoCalcSkipForEachFrame.blod`, plus `LODUser` switched.
+  - RSTB: `MultiplayerAI.baiprog` raised to 116661 (Jugador2's value), and each `Actor/Pack/JugadorN.bactorpack` raised by its size growth + 0x1000.
+* **How remote animations are applied (IDA + memory scan, 15 Nov 2026)**:
+  - `TitleBG.pack/EventFlow/MultiplayerEvent.bfevfl` runs, per player, `CheckGameDataInt(Jugador<N>_Status)` and then `Demo_PlayASForDemo` with `ASName = "Jugador<N>_animationthing"` (and `Jugador<N>_AttackAnimation` for attacks). The DLL replaces those placeholders with `Anim_<hash>` / `Attack_<hash>`, names that exist in the `MultiplayerAS` ASList.
+  - BFEVFL files are little-endian (`ff fe`). On Wii U the game builds a separate big-endian runtime copy and runs that one, where each string is a u16 BE length, the text, then 0. The old walk in `scanPlayerFlags` only ever finds the LE file buffer, so writes there never animated anyone. This is the root cause of the T-pose for all players.
+  - `PlayASForDemo` (AI class, CRC `0xa8bfb550`; param setup `sub_2358BDC`) copies `ASName` into its own `sead::SafeString` (at `this+0x2C`) from the event's dynamic param via `sub_30EC1B8`, which takes a C-string pointer. So the text is read up to the NUL each time the action loads its params.
+  - `ScanEventFlowStrings()` finds the BE runtime copies, and `WriteEvflAnimation()` writes the zero-padded text there **without touching the u16 length**. An earlier version rewrote the length, and the game deleted the actor within a second.
+* **Crash when teleporting**: stage teardown erases the remote Jugador. `PThread` immediately re-queued it, and `createActor_` ran with registers from the dying stage, so Cemu crashed 1-2 s later (dumps `Cemu.exe.24016/26024.dmp`).
+  - An erase or disappearance we didn't request (`Player::DeleteRequested` false) now calls `Main::MarkStageUnstable(8000)`, as do a Link erase and a >50-unit local jump (5000).
+  - While the stage is unstable, `mainFn` won't call `createActor_` and `PThread` won't queue creates. A fresh register capture is also required afterwards.
+* **Stage teardown in IDA (`U-King.rpx.i64`)**: `sub_2C268D0` is the stage manager's unload/reload state machine, with Japanese step labels such as `AutoPlacementMgr/PlacementMgr/RadarMgr stopThread()待ち`. Step 9 starts at `0x2c27314`. Hooking it there would give an exact "stage unloading" event if the heuristics above prove insufficient.
+* **`ModInstaller.Repair()`** re-deploys the whole bundle when the SHA-256 of `ModPack` differs from the `bundle=` line in `.milkbar_installed`. It now runs before the per-connect edits (player model, Jugador attention).
+* **Fresh `createActor_` capture is only required after a stage change**: Link erased, or a local jump over 50 units per tick (`Main::RequestFreshSpawnCapture`). Requiring it for every spawn stalled respawns while the game created no actors of its own.
+* **Launcher UI**:
+  - The window is resizable (`CanResizeWithGrip`). `MainWindow.xaml.cs` scales `RootGrid` uniformly from the 1186x666.8 design size, but not in the in-game overlay, which follows Cemu's window.
+  - The settings panel uses fixed 99 px rows in a `ScrollViewer`.
+* **`PlayASForDemo` works; the idle hash was wrong (PPC debugger + IDA, 15 Nov 2026)**:
+  - A breakpoint on the enter function (`0x2357db4`) showed the action entered for `Jugador2` with `ASName = "Anim_789467239"`.
+  - With `SeqBank = 0` (the event's value), enter (`sub_2359564`) calls `sub_37946F0` → `sub_370DCF8`, which plays the AS by name.
+  - An AS hash is the CRC32 of the animation file name. `789467239` is `Sword_Attack_Jump_F_St`, not an idle. This is why the remote player played a jump attack and then froze on its last frame. The real idle is `Nml_Wait` = `2327397999`.
+  - `AnimTables.h` (generated from the Jugador pack) lists the 1292 `Anim_` entries in `MultiplayerAS.baslist` and the 176 `Attack_` demo actions.
+  - `Player::ResolveAnim()` only sends hashes the ASList has, falling back to the last good one or to idle. Attacks need a matching `Attack_` action.
+  - Test switch: `%APPDATA%\BOTWM\anim_mode.txt` (`off` / `idle` / `full`, default `full`).
+* **Animation test mode**: set `test` in `%APPDATA%\BOTWM\anim_mode.txt` (implemented in `AnimDebug.h`).
+  - Remote players cycle through the ASList, and their name tag shows `<i>/<n> <name>`.
+  - Hotkeys work only while this Cemu window has focus: Ctrl+Shift+Right/Left = next/previous, Up = mark OK, Down = mark BAD, R = replay, A = auto-advance.
+  - Optional `anim_test_filter.txt` takes name fragments (one per line) to limit which animations are tested.
+  - Verdicts are appended to `anim_test_results.txt`.
+  - `AnimNames.h` maps hashes to names, so the log names every animation it receives.
+* **Animation slots (IDA, 15 Nov 2026)**:
+  - `actor+0x394` is the AS holder: `+0x94` = AnmTarget count, `+0x98` = targets (0x34 bytes each); target `+0x18` = slot count, `+0x1C` = slots (0x68 bytes each).
+  - `slot+0xC != 0` means an AS is playing, and `*(*slot+4)` is its name (`sub_370E458`, `sub_37143EC`).
+  - `sub_370DBDC(holder, target, slot, ...)` plays an AS by name. `PlayASForDemo` plays on target 0, slot 0.
+  - `BindFlg 0` includes a bone subtree and `BindFlg 3` excludes it. In Link's ModelList: target 0 = lower body, 1 = upper body (no face), 2 = right arm, 3 = face (TargetType 1, three slots).
+  - `LocalInstance::LogASTargets()` logs every target's AS name for the local Link (tag `ASTargets`).
+* **Face misplaced on remote players**: the Jugador's target 0 (where `PlayASForDemo` plays) excluded `Face_Root`, and nothing ever plays on the face-only target 1, so the face bones stayed at rest while the head moved.
+  - All 32 packs now have `IsParticalEnable = false` on `AnmTarget_0`. The `.bmodellist` size is unchanged, so the RSTB needs no update.
+* **Respawn stalled forever when standing still**: an unrequested Jugador disappearance forced a fresh `createActor_` capture, and a static scene never provides one.
+  - `MarkStageUnstable(ms, keepCaptureBackup = true)` now keeps the previous capture for that case and reuses it after 15 s without a fresh one.
+  - Link erase and the teleport detector still drop it.
+* **Tests on 16 Nov 2026 (logs `LatestLog_25076/19916/18348`, dumps `Cemu.exe.25076/19916.dmp`)**:
+  - Reusing the saved capture crashed Cemu when it fired during the local Link's fast travel (target 0 AS = `Warp`). `LogASTargets()` now treats `Warp` as a hard stage change (`MarkStageUnstable(10000)`), which drops the backup.
+  - A freshly spawned Jugador was sometimes deleted by the game within a second, and its memory was reused (`Kibako_Contain_0`). The placement data copied from the game's last `createActor_` (r7 storage) is the suspect.
+    - `Player::CheckInstantDeletion()` discards the capture when that happens within 5 s.
+    - `setupActor` logs `Spawn template: placement data copied from '<actor>'`.
+  - `ValidateActor` drops an actor only after 3 consecutive failed name reads, and logs the name it read.
+  - The `Status = 1` delete wait went from 5 to 8 s; the game takes just over 5 s.
+  - The other dump (25076) crashed in recompiled game code reading guest address `0x111`. Cemu's `log.txt` was overwritten by the next start, so the guest PC is unknown.
+  - Launcher crash: two launchers started together raced on `user.config` (`ConfigurationErrorsException` in `SettingsPanelModel`). Every settings save now goes through `SettingsSaver.SaveSafe()` (retries, never throws).
+  - The launcher builds with the user-local SDK: `%LOCALAPPDATA%\Microsoft\dotnet\dotnet.exe build ... -c Release`.
+* **Wrong / late remote animations (test 16 Nov 2026 23:37)**: the hash from `getAnimation()`'s pointer chain lags behind. It kept `Nml_Move_Run` while Link's AS was `Wait`, and `Sword_Charge` during `CutS1`.
+  - `LocalInstance::CorrectAnimation()` reads Link's target-0 AS name and keeps the hash only if that AS can play it.
+  - Otherwise it sends the AS's animation whose name is closest to the last consistent one (same weapon family), or the AS's default.
+  - The AS-to-animation table is `LinkASMap.h`, generated from `GameROMPlayer`'s `Player.baslist` and `Actor/AS/*.bas` (`FileName` params). Animations are ordered so start/end/random/pose clips come last.
+  - The network rate is 60 updates/s (`Server.SerializationRate`), so it isn't the cause.
+* **The spawn hook is `ActorCreator::requestCreateMapActor`** (zeldaret/botw `actActorCreator.cpp`).
+  - Arguments: r3 = this, r4 = name, r5 = heap, r6 = mubin_iter, r7 = map_object, r8 = handle, r9 = task_lane_id, r10 = params.
+  - Our 104-byte "actor storage" is a copied `ksys::map::Object` (`mapObject.h`). Wii U offsets: 0x00 mFlags0, 0x04 mActorDataIdx/mFlags, 0x0C mId, 0x0E mStaticCompoundActorId, 0x10/0x14/0x18 pointers, 0x1C MubinIter, 0x24 mProc, 0x28 mLinkData, 0x2C revival flag, 0x34 mHashId, 0x38 mTranslate, 0x44 mTraverseDist, 0x48 mTraverseDistInt, 0x4A mHardModeFlags.
+  - `PrepareInstanceData` now also resets mId, mStaticCompoundActorId (-1), the 0x10/0x14 pointers and mHardModeFlags. Before, these came from the copied actor, a suspected cause of the instant deletions.
+  - The decompilation is a Switch 1.5.0 reference, so Wii U offsets must be re-derived from the 32-bit layout.
+* **Remote movement smoothing (17 Nov 2026)**: the old speed-guess extrapolation in `Player::Teleport(pos, true)` overshot and snapped back, and part of its formula divided by the absolute world coordinate. It is replaced by snapshot interpolation.
+  - `set()` → `PushSnapshot()` stores each received position with a high-resolution timestamp (`NowMs`, QueryPerformanceCounter; GetTickCount only ticks every ~15.6 ms).
+  - `PThread` draws `SamplePosition()`: 100 ms in the past, blended between the two samples around that time.
+  - When packets are late it extrapolates along the last movement for at most 150 ms. Jumps over 25 units snap.
+  - `PThread` runs at ~120 updates/s for FPS++ (60-120 FPS). FPS++ keeps game speed in real time, so time-based blending is correct at any FPS.
+* **Upper-body layer experiment (17 Nov 2026)**: in `PlayASForDemo`, `TargetIndex` = AnmTarget (-1 = all) and `SeqBank` = slot inside it (`sub_2359564`: param +20 / +24).
+  - Link's shield, horse call and bow draw play on his target 1, slot 1 (`WaitAttentionUpper`, `MoveAttentionUpper`, `HorseCall`, `BowCharge`), an overlay the mod never sent.
+  - Test: `MultiplayerEvent.bfevfl` gets an extra `Demo_PlayASForDemo` step for Jugador1/2 (`Jugador<N>_UpperTest`, `ASName = Anim_618558213` = `Sword_Guard_Wait`, `TargetIndex = 2`, the Jugador upper-body target), chained after the main PlayAS.
+  - The bfevfl grew to 84296 bytes, so its RSTB entry was raised from 83616 to 92000. Backups: `TitleBG.pack.before_upper`, `rstb.before_upper` in the scratchpad.
+  - Link's ASList also has a crossfade (`CFDefines`) section that the Jugador's `MultiplayerAS` lacks.
+* **Upper-body layer sync (17 Nov 2026)**:
+  - **Packet:** new `int UpperAnimation` right after `Animation` in the DLL (`ClientCharacterDTO`, `CloseCharacterDTO`, `Serialization.cpp`) and the server (`ClientPlayerDTO`, `ClosePlayerDTO`, `ServerClasses/Player`). The server serializes by reflection in field order, so client and server must be the same build.
+  - **Sender:** `LocalInstance::GetUpperAnimation()` reads Link's target 1, slot 1 overlay AS (`WaitAttentionUpper`, `MoveAttentionUpper`, `HorseCall`, `BowCharge`...) and sends a playable clip for it via `LinkASMap` and `PickPlayable`, matching the weapon family of the base clip. 0 means nothing is layered.
+  - **Receiver:** every player's flow in `MultiplayerEvent.bfevfl` now starts with `Jugador<N>_Hold` → `Jugador<N>_Upper` → status switch.
+    - `Jugador<N>_Upper` is a `Demo_PlayASForDemo` with `TargetIndex = 2` (the Jugador's upper-body target) and the placeholder `ASName = Jugador<N>_upperanimthing`, so it runs on every pass, attacks included.
+    - The DLL writes it as event-string kind 3 (`EvflUpperStrings`): the overlay clip, otherwise the attack clip, otherwise the body clip, so the upper body follows.
+  - The bfevfl is now 100120 bytes; its RSTB entry was raised to 112000. The `Jugador1/2_UpperTest` experiment was replaced.
+  - Ideas for this design came from the TotK online mod's puppet / animation-request sync (no code used).
+* **Removed**:
+  - The Weather-hook spawn path (it never dispatched, and it raced `mainFn` on `ringPtr`).
+  - The 100-unit "teleport detector" (it orphaned live remote actors).
+  - The unregistered `remoteBomb_onAICalc2`.
 
 ---
 

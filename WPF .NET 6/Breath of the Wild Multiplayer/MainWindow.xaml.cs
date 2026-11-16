@@ -1,4 +1,4 @@
-﻿using Breath_of_the_Wild_Multiplayer.MVVM.ViewModel;
+using Breath_of_the_Wild_Multiplayer.MVVM.ViewModel;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -21,17 +21,6 @@ namespace Breath_of_the_Wild_Multiplayer
         {
             CopyAppdataFiles();
 
-            if(Properties.Settings.Default.bcmlLocation == "")
-            {
-                string Local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-
-                if (File.Exists($"{Local}/bcml/settings.json"))
-                {
-                    Properties.Settings.Default.bcmlLocation = $"{Local}/bcml/settings.json";
-                    Properties.Settings.Default.Save();
-                }
-            }
-
             InitializeComponent();
 
             var viewModel = DataContext as MainViewModel;
@@ -39,7 +28,57 @@ namespace Breath_of_the_Wild_Multiplayer
             if(viewModel != null )
             {
                 viewModel.Window = this;
+                viewModel.PropertyChanged += (s, e) =>
+                {
+                    if (e.PropertyName == nameof(MainViewModel.disableBackground))
+                        UpdateUiScale();
+                };
             }
+
+            UpdateUiScale();
+        }
+
+        // Size the launcher UI was designed for (window size minus its 1px border).
+        private const double DesignWidth = 1186;
+        private const double DesignHeight = 666.8;
+
+        private void Window_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateUiScale();
+
+        /// <summary>
+        /// Scales the whole UI uniformly when the launcher window is resized, so the views' fixed-size
+        /// frames stay intact. The in-game overlay (disableBackground) follows Cemu's window instead and
+        /// keeps its normal stretching layout.
+        /// </summary>
+        private void UpdateUiScale()
+        {
+            if (RootGrid == null)
+                return;
+
+            bool overlay = (DataContext as MainViewModel)?.disableBackground == true;
+            if (overlay)
+            {
+                RootGrid.LayoutTransform = System.Windows.Media.Transform.Identity;
+                RootGrid.Width = double.NaN;
+                RootGrid.Height = double.NaN;
+                RootGrid.HorizontalAlignment = HorizontalAlignment.Stretch;
+                RootGrid.VerticalAlignment = VerticalAlignment.Stretch;
+                return;
+            }
+
+            double availableWidth = Math.Max(1, ActualWidth - 2);
+            double availableHeight = Math.Max(1, ActualHeight - 2);
+            if (ActualWidth <= 0 || ActualHeight <= 0)
+            {
+                availableWidth = DesignWidth;
+                availableHeight = DesignHeight;
+            }
+
+            double scale = Math.Min(availableWidth / DesignWidth, availableHeight / DesignHeight);
+            RootGrid.Width = DesignWidth;
+            RootGrid.Height = DesignHeight;
+            RootGrid.HorizontalAlignment = HorizontalAlignment.Center;
+            RootGrid.VerticalAlignment = VerticalAlignment.Center;
+            RootGrid.LayoutTransform = new System.Windows.Media.ScaleTransform(scale, scale);
         }
 
         protected void CloseClick(object sender, RoutedEventArgs e)

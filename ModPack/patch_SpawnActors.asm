@@ -4189,8 +4189,6 @@ b restoreAndExit
 CallDllFunc:
 lis r11, HLELoc@ha
 addi r11, r11, HLELoc@l
-cmpwi r11, 0x0
-beq restoreAndExit
 mtctr r11
 
 lis r3, startData@ha

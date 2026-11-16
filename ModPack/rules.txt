@@ -1,0 +1,7 @@
+[Definition]
+titleIds = 00050000101C9300,00050000101C9400,00050000101C9500
+name = Breath of the Wild Multiplayer
+path = "The Legend of Zelda: Breath of the Wild/Mods/Multiplayer"
+description = Core Breath of the Wild Multiplayer mod with 32 Jugador actors, PPC assembly hooks, animations, and memory sync.
+version = 7
+fsPriority = 100

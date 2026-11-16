@@ -1,4 +1,4 @@
-using Breath_of_the_Wild_Multiplayer.Source_files;
+﻿using Breath_of_the_Wild_Multiplayer.Source_files;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -21,7 +21,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
             set { 
                 _enableCustomModels = value;
                 Properties.Settings.Default.playAsModel = value;
-                Properties.Settings.Default.Save();
+                SettingsSaver.SaveSafe();
                 OnPropertyChanged();
             }
         }
@@ -53,20 +53,38 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
         }
 
         public RelayCommand discordButton { get; set; }
-        public RelayCommand cemuButton { get; set; }
-        public RelayCommand bcmlButton => cemuButton;
+        public RelayCommand selectCemuSlot { get; set; }
+        public RelayCommand clearCemuSlot { get; set; }
+        public RelayCommand installModButton { get; set; }
+        public RelayCommand uninstallModButton { get; set; }
 
-        public string CemuLocationTooltip
+        private bool _modOperationRunning;
+
+        public string ModStatus =>
+            $"{CemuProfiles.Describe(CemuProfiles.Active)}: " +
+            (ModInstaller.IsInstalled ? "installed (click to repair)" : "not installed (click to install)") +
+            "\nPick the Cemu with the selector above the Connect button.";
+
+        /// <summary>Label of the Install / Uninstall rows: which Cemu they act on.</summary>
+        public string ModTargetLabel => $"Mod on Cemu {CemuProfiles.Active + 1}";
+
+        /// <summary>Button text of the four Cemu rows (folder name, or a prompt).</summary>
+        public string[] CemuSlotButtons => Enumerable.Range(0, CemuProfiles.SlotCount)
+            .Select(i => CemuProfiles.GetSlotDir(i) is string d ? new DirectoryInfo(d).Name : "Select Cemu.exe").ToArray();
+
+        /// <summary>Tooltips of the four Cemu rows (full path).</summary>
+        public string[] CemuSlotTooltips => Enumerable.Range(0, CemuProfiles.SlotCount)
+            .Select(i => CemuProfiles.GetSlot(i) is string p && !string.IsNullOrEmpty(p)
+                ? p + "\nClick to change, right-click to clear."
+                : "Click to select a Cemu.exe. Each extra Cemu should be a separate (portable) copy so saves, logs and caches don't clash.")
+            .ToArray();
+
+        private void RefreshCemuBindings()
         {
-            get
-            {
-                if (!string.IsNullOrEmpty(Properties.Settings.Default.cemuLocation))
-                    return Properties.Settings.Default.cemuLocation;
-                string resolved = Source_files.BcmlSettings.ResolveCemuDir();
-                if (!string.IsNullOrEmpty(resolved))
-                    return resolved;
-                return "Click to select your Cemu.exe or Cemu folder";
-            }
+            OnPropertyChanged(nameof(CemuSlotButtons));
+            OnPropertyChanged(nameof(CemuSlotTooltips));
+            OnPropertyChanged(nameof(ModStatus));
+            OnPropertyChanged(nameof(ModTargetLabel));
         }
 
         static private string BackgroundsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Backgrounds");
@@ -115,7 +133,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
                         Properties.Settings.Default.backgroundExt = Backgrounds[index].Extension;
                     }
                     updateBackground();
-                    Properties.Settings.Default.Save();
+                    SettingsSaver.SaveSafe();
 
                     await Sleep(300);
                     backgroundMovingLeft = false;
@@ -139,7 +157,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
                     Properties.Settings.Default.backgroundDir = Backgrounds[index].Path;
                     Properties.Settings.Default.backgroundExt = Backgrounds[index].Extension;
                     updateBackground();
-                    Properties.Settings.Default.Save();
+                    SettingsSaver.SaveSafe();
 
                     await Sleep(300);
                     backgroundMovingRight = false;
@@ -153,48 +171,131 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
                 Properties.Settings.Default.playerName = "Link";
                 index = 0;
                 updateBackground();
-                Properties.Settings.Default.Save();
+                SettingsSaver.SaveSafe();
             });
+
+            installModButton = new RelayCommand(async o => await RunModOperation(true));
+            uninstallModButton = new RelayCommand(async o => await RunModOperation(false));
 
             discordButton = new RelayCommand(o => {
                 Process.Start(new ProcessStartInfo("https://discord.gg/sqeKHhBJse") { UseShellExecute=true});
             });
 
-            cemuButton = new RelayCommand(o =>
+            selectCemuSlot = new RelayCommand(o =>
             {
-                string initDir = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-                if (!string.IsNullOrEmpty(Properties.Settings.Default.cemuLocation) && File.Exists(Properties.Settings.Default.cemuLocation))
-                    initDir = Path.GetDirectoryName(Properties.Settings.Default.cemuLocation);
-                else
-                {
-                    string resolved = Source_files.BcmlSettings.ResolveCemuDir();
-                    if (!string.IsNullOrEmpty(resolved) && Directory.Exists(resolved))
-                        initDir = resolved;
-                }
+                if (!int.TryParse(o?.ToString(), out int slot) || slot < 0 || slot >= CemuProfiles.SlotCount)
+                    return;
+
+                string initDir = CemuProfiles.GetSlotDir(slot)
+                    ?? CemuProfiles.ConfiguredSlots.Select(CemuProfiles.GetSlotDir).FirstOrDefault()
+                    ?? Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
 
                 OpenFileDialog openFileDialog = new OpenFileDialog()
                 {
-                    Title = "Select Cemu.exe or Cemu directory",
-                    Filter = "Cemu Executable (Cemu.exe)|Cemu.exe;cemu.exe|BCML Settings (settings.json)|settings.json|All files (*.*)|*.*",
+                    Title = $"Select Cemu.exe for Cemu {slot + 1}",
+                    Filter = "Cemu Executable (Cemu.exe)|Cemu.exe;cemu.exe|All files (*.*)|*.*",
                     InitialDirectory = initDir
                 };
 
-                if (openFileDialog.ShowDialog() == true)
+                if (openFileDialog.ShowDialog() != true)
+                    return;
+
+                string chosenDir = Path.GetDirectoryName(openFileDialog.FileName);
+                for (int i = 0; i < CemuProfiles.SlotCount; i++)
                 {
-                    string chosen = openFileDialog.FileName;
-                    if (Path.GetFileName(chosen).Equals("settings.json", StringComparison.OrdinalIgnoreCase))
+                    if (i != slot && CemuProfiles.GetSlotDir(i) is string other &&
+                        string.Equals(Path.GetFullPath(other).TrimEnd('\\'), Path.GetFullPath(chosenDir).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
                     {
-                        Properties.Settings.Default.bcmlLocation = chosen;
+                        System.Windows.MessageBox.Show($"That Cemu is already Cemu {i + 1}. Each slot needs its own Cemu folder.",
+                            "Milk Bar Launcher", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+                        return;
                     }
-                    else
-                    {
-                        Properties.Settings.Default.cemuLocation = chosen;
-                    }
-                    Properties.Settings.Default.Save();
-                    OnPropertyChanged(nameof(CemuLocationTooltip));
-                    SharedData.ServerBrowser?.LoadServers();
                 }
+
+                if (!CemuProfiles.IsPortable(chosenDir))
+                {
+                    var answer = System.Windows.MessageBox.Show(
+                        "This Cemu keeps its settings, saves, logs and caches in %APPDATA%\\Cemu, shared with every other non-portable Cemu. " +
+                        "Running two of them at once makes them overwrite each other's files.\n\n" +
+                        "Make it a portable copy? It gets its own settings, saves, logs, caches and graphic packs (copied from your current Cemu), " +
+                        "and links to your installed game files instead of copying them. Your current Cemu is not changed.",
+                        $"Cemu {slot + 1}", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Question);
+                    if (answer == System.Windows.MessageBoxResult.Yes)
+                    {
+                        try
+                        {
+                            string result = CemuProfiles.MakePortable(chosenDir);
+                            System.Windows.MessageBox.Show(result, $"Cemu {slot + 1}", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Windows.MessageBox.Show(ex.Message, $"Cemu {slot + 1}", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+                        }
+                    }
+                }
+
+                CemuProfiles.SetSlot(slot, openFileDialog.FileName);
+                if (!CemuProfiles.IsConfigured(CemuProfiles.Active))
+                    CemuProfiles.Active = slot;
             });
+
+            clearCemuSlot = new RelayCommand(o =>
+            {
+                if (!int.TryParse(o?.ToString(), out int slot))
+                    return;
+                CemuProfiles.SetSlot(slot, null);
+                if (slot == CemuProfiles.Active && CemuProfiles.ConfiguredSlots.Any())
+                    CemuProfiles.Active = CemuProfiles.ConfiguredSlots.First();
+            });
+
+            CemuProfiles.Changed += () => System.Windows.Application.Current?.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                RefreshCemuBindings();
+                SharedData.ServerBrowser?.LoadServers();
+            }));
+        }
+
+        private async Task RunModOperation(bool install)
+        {
+            if (_modOperationRunning)
+                return;
+
+            if (!install)
+            {
+                var confirm = System.Windows.MessageBox.Show(
+                    $"This removes the multiplayer graphic pack from {CemuProfiles.Describe(CemuProfiles.Active)} and restores its graphic pack settings to how they were before installing.\n\nYour game files and save data are not touched.\n\nUninstall the mod?",
+                    "Uninstall multiplayer mod", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Question);
+                if (confirm != System.Windows.MessageBoxResult.Yes)
+                    return;
+            }
+
+            _modOperationRunning = true;
+            try
+            {
+                List<string> warnings = new List<string>();
+                if (install)
+                    warnings = await Task.Run(() => ModInstaller.Install());
+                else
+                    await Task.Run(() => ModInstaller.Uninstall());
+
+                string target = CemuProfiles.Describe(CemuProfiles.Active);
+                string message = install ? $"Multiplayer mod installed on {target}." : $"Multiplayer mod uninstalled from {target}. Everything it changed has been restored.";
+                if (warnings.Any())
+                    message += "\n\n" + string.Join("\n\n", warnings);
+
+                System.Windows.MessageBox.Show(message, "Milk Bar Launcher", System.Windows.MessageBoxButton.OK,
+                    warnings.Any() ? System.Windows.MessageBoxImage.Warning : System.Windows.MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                System.Windows.MessageBox.Show(ex.Message, "Milk Bar Launcher", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+            }
+            finally
+            {
+                _modOperationRunning = false;
+                RefreshCemuBindings();
+                SharedData.ServerBrowser?.LoadServers();
+            }
         }
 
         private async Task Sleep(int i)
@@ -223,7 +324,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
                 Properties.Settings.Default.backgroundDir = "";
                 Properties.Settings.Default.backgroundExt = "";
                 updateBackground();
-                Properties.Settings.Default.Save();
+                SettingsSaver.SaveSafe();
                 return;
             }
 
@@ -256,7 +357,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
                 Properties.Settings.Default.backgroundDir = "";
                 Properties.Settings.Default.backgroundExt = "";
                 Properties.Settings.Default.actualBackground = "\\Images\\mainWindowBackground.png";
-                Properties.Settings.Default.Save();
+                SettingsSaver.SaveSafe();
                 index = -1;
                 return;
             }

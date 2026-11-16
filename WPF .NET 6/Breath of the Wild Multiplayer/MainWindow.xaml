@@ -13,7 +13,10 @@
 
         WindowStyle="None"
         WindowStartupLocation="CenterScreen"
-        ResizeMode="CanMinimize"
+        ResizeMode="CanResizeWithGrip"
+        SizeChanged="Window_SizeChanged"
+        MinHeight="400"
+        MinWidth="700"
         Background="Transparent"
         AllowsTransparency="True"
         Title="Breath of the Wild Multiplayer">
@@ -48,13 +51,15 @@
             </Style>
         </Border.Style>
 
-        <Grid>
+        <!-- Laid out for 1186x666.8. MainWindow.xaml.cs scales it uniformly when the window is resized
+             (not in the in-game overlay, which follows Cemu's window). -->
+        <Grid x:Name="RootGrid" HorizontalAlignment="Center" VerticalAlignment="Center">
             <Grid.RowDefinitions>
                 <RowDefinition Height="30"/>
                 <RowDefinition/>
             </Grid.RowDefinitions>
 
-            <Label Content="{Binding appTitle}" 
+            <Label Content="{Binding appTitle}"
                Grid.Row="2" 
                HorizontalAlignment="Right" 
                VerticalAlignment="Bottom" 

@@ -92,7 +92,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
             {
                 this.ChangeSelectedModel(_characters[(int)o]);
                 Properties.Settings.Default.playerModel = JsonConvert.SerializeObject(this.SelectedModel);
-                Properties.Settings.Default.Save();
+                SettingsSaver.SaveSafe();
             });
         }
 
@@ -196,7 +196,7 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
             this.Characters[2].Name = environmentalModel.Name;
             this.Characters[2].Description = $"[{environmentalModel.Description}]\nSelect any model that appears in the game.";
             Properties.Settings.Default.playerModel = JsonConvert.SerializeObject(this.SelectedModel);
-            Properties.Settings.Default.Save();
+            SettingsSaver.SaveSafe();
         }
     }
 }
