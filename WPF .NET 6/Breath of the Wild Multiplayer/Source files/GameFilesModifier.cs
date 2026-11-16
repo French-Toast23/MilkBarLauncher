@@ -442,7 +442,27 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
             });
         }
 
+        // aapmLib.exe always reads and writes %APPDATA%\BOTWM\Temp\AampTemp.txt. When the "players on this PC"
+        // dialog starts several launchers at once they collided on that file ("being used by another process").
+        // A machine-wide mutex makes the launchers take turns for this step.
+        private static readonly System.Threading.Mutex AampLibMutex = new System.Threading.Mutex(false, "Local\\BOTWM_AampLib");
+
         private static void RunAampLib(List<Tuple<ISarcFile, AampLibAction>> filesToModify)
+        {
+            bool owned = false;
+            try
+            {
+                try { owned = AampLibMutex.WaitOne(TimeSpan.FromSeconds(60)); }
+                catch (System.Threading.AbandonedMutexException) { owned = true; } // a launcher closed mid-step
+                RunAampLibLocked(filesToModify);
+            }
+            finally
+            {
+                if (owned) AampLibMutex.ReleaseMutex();
+            }
+        }
+
+        private static void RunAampLibLocked(List<Tuple<ISarcFile, AampLibAction>> filesToModify)
         {
             //string byteString = string.Join(" ", byteArray.Select(b => b.ToString("X2")));
             string file = Path.Combine(AppContext.BaseDirectory, "Resources", "aapmLib.exe");
