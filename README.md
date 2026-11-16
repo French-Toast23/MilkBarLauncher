@@ -37,8 +37,8 @@ No BCML or UKMM is needed: the launcher installs the mod itself and can remove i
 - Cemu must be closed for both.
 
 # Several Cemu installs / players on one PC
-- Settings has up to four *Cemu* slots. Extra Cemus should be **portable** copies (a `portable` folder next to `Cemu.exe`)
-  so they don't share settings, saves, logs and caches.
+- Settings has up to four *Cemu* slots. Click an empty slot to **download Cemu 2.6 automatically**: it is set up as a portable copy with your settings, controller, graphic packs and saves, and shares the game files of your other Cemu.
+- Extra Cemus must be **portable** copies (a `portable` folder next to `Cemu.exe`) so they don't share settings, saves, logs and caches; picking an existing Cemu offers to set this up.
 - Pressing **Connect** asks how many players play on this PC and which Cemu each one uses. Each extra player gets its
   own launcher window, which starts its Cemu and joins the same server.
 - Install / Uninstall act on the Cemu selected above the Connect button.
@@ -66,6 +66,9 @@ see [CLAUDE.md](CLAUDE.md).
   - [zeldamods/rstb](https://github.com/zeldamods/rstb) (GPL-2.0): resource size table.
   - [zeldamods/evfl](https://github.com/zeldamods/evfl) (GPL-2.0): event flows.
   - IDA Pro: disassembly of the game executable.
+- Downloaded by the launcher at the player's request (not bundled):
+  - [Cemu 2.6](https://github.com/cemu-project/Cemu/releases/tag/v2.6), the official Windows release. MPL-2.0.
+  - [Cemu community graphic packs](https://github.com/cemu-project/cemu_graphic_packs) (for Extended Memory). CC0-1.0.
 
 # Third-party libraries shipped with the launcher
 | Library | License |

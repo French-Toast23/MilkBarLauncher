@@ -363,7 +363,12 @@ dotnet build "WPF .NET 6\Breath of the Wild Multiplayer\Breath of the Wild Multi
   - Each Cemu user data folder has its own manifest and backups: `install_manifest_<sha1-8>.json` and `Backups_<sha1-8>`. `%APPDATA%/Cemu` keeps the original names.
   - Install and Uninstall only require that slot's Cemu to be closed. Connect refuses a slot whose Cemu is already running.
   - Extra Cemus must be **portable** (a `portable` folder next to `Cemu.exe`). Otherwise they all share `%APPDATA%/Cemu`: `settings.xml`, `log.txt`, caches and saves.
-  - Picking a non-portable Cemu offers `CemuProfiles.MakePortable()`. It copies settings (minus our pack entry, `mlc_path` cleared), profiles, saves, the transferable shader cache and downloaded graphic packs, and adds a junction for `mlc01/usr/title`.
+  - **One-click Cemu** (`Source files/CemuSetup.cs`): clicking an empty slot offers to download the official Cemu 2.6 (`cemu-2.6-windows-x64.zip` from the GitHub release) into `<folder>/Cemu_2.6 p<N>` and make it portable.
+  - `SetUpPortableAsync` fills in only what's missing, copied from an already set-up slot: settings (minus our pack entry, `mlc_path` cleared), controller and game profiles, community graphic packs (downloaded from cemu_graphic_packs when no slot has them), transferable shader cache, and saves including Cemu accounts.
+  - It also adds a junction for `mlc01/usr/title` to the final game folder (junction chains are resolved).
+  - Picking an existing non-portable or incomplete Cemu offers the same setup. It reports what's left to do in Cemu itself (controller, game install) and can open Cemu.
+  - Tested 17 Nov 2026: download, unpack and seed into `Cemu_2.6 autotest` with nothing missing.
+  - Not done yet: `.wua` support. Cemu can run a `.wua`, but the installer needs the v208 update files inside it.
 * **Several players on one PC**: Connect opens `PlayerSetupWindow`, which asks for 1-4 players and a Cemu slot per player.
   - Player 1 plays in this launcher. Each other player gets a new launcher process started with `--cemu-slot N --connect <base64 JSON server>` (`LaunchArgs`), which sets its slot for that process only and connects automatically.
   - A launcher drives exactly one Cemu (one DLL, one pipe, one overlay).

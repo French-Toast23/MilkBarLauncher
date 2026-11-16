@@ -181,10 +181,27 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
                 Process.Start(new ProcessStartInfo("https://discord.gg/sqeKHhBJse") { UseShellExecute=true});
             });
 
-            selectCemuSlot = new RelayCommand(o =>
+            selectCemuSlot = new RelayCommand(async o =>
             {
                 if (!int.TryParse(o?.ToString(), out int slot) || slot < 0 || slot >= CemuProfiles.SlotCount)
                     return;
+
+                // Empty slot: offer to download and set up Cemu 2.6 automatically.
+                if (!CemuProfiles.IsConfigured(slot))
+                {
+                    var choice = System.Windows.MessageBox.Show(
+                        $"Cemu {slot + 1} is empty.\n\n" +
+                        "Yes: download Cemu 2.6 and set it up automatically (portable copy; settings, controllers, graphic packs and saves copied from your other Cemu, game files shared).\n\n" +
+                        "No: choose a Cemu.exe you already have.",
+                        $"Cemu {slot + 1}", System.Windows.MessageBoxButton.YesNoCancel, System.Windows.MessageBoxImage.Question);
+                    if (choice == System.Windows.MessageBoxResult.Cancel)
+                        return;
+                    if (choice == System.Windows.MessageBoxResult.Yes)
+                    {
+                        await DownloadCemuIntoSlot(slot);
+                        return;
+                    }
+                }
 
                 string initDir = CemuProfiles.GetSlotDir(slot)
                     ?? CemuProfiles.ConfiguredSlots.Select(CemuProfiles.GetSlotDir).FirstOrDefault()
@@ -212,23 +229,25 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
                     }
                 }
 
-                if (!CemuProfiles.IsPortable(chosenDir))
+                if (!CemuProfiles.IsPortable(chosenDir) || !File.Exists(Path.Combine(chosenDir, "portable", "settings.xml")))
                 {
                     var answer = System.Windows.MessageBox.Show(
-                        "This Cemu keeps its settings, saves, logs and caches in %APPDATA%\\Cemu, shared with every other non-portable Cemu. " +
-                        "Running two of them at once makes them overwrite each other's files.\n\n" +
-                        "Make it a portable copy? It gets its own settings, saves, logs, caches and graphic packs (copied from your current Cemu), " +
-                        "and links to your installed game files instead of copying them. Your current Cemu is not changed.",
+                        (CemuProfiles.IsPortable(chosenDir)
+                            ? "This portable Cemu isn't set up yet."
+                            : "This Cemu keeps its settings, saves, logs and caches in %APPDATA%\\Cemu, shared with every other non-portable Cemu, so two of them running at once overwrite each other's files.") +
+                        "\n\nSet it up as its own portable copy? Missing settings, controllers, graphic packs and saves are copied from your other Cemu and the game files are shared. Nothing that already exists is overwritten.",
                         $"Cemu {slot + 1}", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Question);
                     if (answer == System.Windows.MessageBoxResult.Yes)
                     {
                         try
                         {
-                            string result = CemuProfiles.MakePortable(chosenDir);
-                            System.Windows.MessageBox.Show(result, $"Cemu {slot + 1}", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+                            var notes = await Task.Run(() => CemuSetup.SetUpPortableAsync(chosenDir, ShowProgress));
+                            SharedData.SetLoadingMessage();
+                            ReportSetup(slot, notes, Path.Combine(chosenDir, "Cemu.exe"));
                         }
                         catch (Exception ex)
                         {
+                            SharedData.SetLoadingMessage();
                             System.Windows.MessageBox.Show(ex.Message, $"Cemu {slot + 1}", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
                         }
                     }
@@ -253,6 +272,61 @@ namespace Breath_of_the_Wild_Multiplayer.MVVM.ViewModel
                 RefreshCemuBindings();
                 SharedData.ServerBrowser?.LoadServers();
             }));
+        }
+
+        private static void ShowProgress(string msg) =>
+            System.Windows.Application.Current?.Dispatcher.BeginInvoke(new Action(() => SharedData.SetLoadingMessage(msg)));
+
+        /// <summary>Downloads Cemu 2.6 into a folder the player picks and assigns it to the slot.</summary>
+        private async Task DownloadCemuIntoSlot(int slot)
+        {
+            string suggested = CemuProfiles.ConfiguredSlots.Select(CemuProfiles.GetSlotDir)
+                                   .Select(d => Directory.GetParent(d)?.FullName).FirstOrDefault(d => d != null)
+                               ?? Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            var folderDialog = new OpenFolderDialog
+            {
+                Title = $"Choose where to put Cemu {slot + 1} (a \"Cemu_2.6 p{slot + 1}\" folder is created inside)",
+                InitialDirectory = suggested
+            };
+            if (folderDialog.ShowDialog() != true)
+                return;
+
+            string target = Path.Combine(folderDialog.FolderName, $"Cemu_2.6 p{slot + 1}");
+            for (int n = 2; File.Exists(Path.Combine(target, "Cemu.exe")); n++)
+                target = Path.Combine(folderDialog.FolderName, $"Cemu_2.6 p{slot + 1} ({n})");
+
+            try
+            {
+                var (exe, notes) = await Task.Run(() => CemuSetup.InstallAsync(target, ShowProgress));
+                SharedData.SetLoadingMessage();
+                CemuProfiles.SetSlot(slot, exe);
+                if (!CemuProfiles.IsConfigured(CemuProfiles.Active))
+                    CemuProfiles.Active = slot;
+                ReportSetup(slot, notes, exe);
+            }
+            catch (Exception ex)
+            {
+                SharedData.SetLoadingMessage();
+                System.Windows.MessageBox.Show("Couldn't set up Cemu: " + ex.Message, $"Cemu {slot + 1}",
+                    System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+            }
+        }
+
+        /// <summary>Tells the player what was set up and opens Cemu when something still has to be done in it.</summary>
+        private static void ReportSetup(int slot, List<string> notes, string cemuExe)
+        {
+            if (notes.Count == 0)
+            {
+                System.Windows.MessageBox.Show($"Cemu {slot + 1} is ready.", $"Cemu {slot + 1}",
+                    System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+                return;
+            }
+
+            var open = System.Windows.MessageBox.Show(
+                $"Cemu {slot + 1} is installed. Still to do in Cemu itself:\n\n- " + string.Join("\n- ", notes) + "\n\nOpen Cemu now?",
+                $"Cemu {slot + 1}", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Information);
+            if (open == System.Windows.MessageBoxResult.Yes && File.Exists(cemuExe))
+                Process.Start(new ProcessStartInfo(cemuExe) { WorkingDirectory = Path.GetDirectoryName(cemuExe), UseShellExecute = false });
         }
 
         private async Task RunModOperation(bool install)
