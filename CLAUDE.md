@@ -466,6 +466,10 @@ dotnet build "WPF .NET 6\Breath of the Wild Multiplayer\Breath of the Wild Multi
     - The DLL writes it as event-string kind 3 (`EvflUpperStrings`): the overlay clip, otherwise the attack clip, otherwise the body clip, so the upper body follows.
   - The bfevfl is now 100120 bytes; its RSTB entry was raised to 112000. The `Jugador1/2_UpperTest` experiment was replaced.
   - Ideas for this design came from the TotK online mod's puppet / animation-request sync (no code used).
+* **Boot crash after the upper-body change (17 Nov 2026, dumps Cemu.exe.4124/19488/11224/25372)**: every dump was a game read at guest 0x20 right after account select. Cause: the merged `Pack/TitleBG.pack` (77,090,788 bytes) outgrew its RSTB entry (77,078,304), because the bfevfl grew.
+  - The merged packs contain the player's own game files, so their size differs per copy. `ModInstaller.DeployBundle` now calls `RstbPatcher.EnsureAtLeast` to raise `Pack/TitleBG.pack` and `Pack/Bootup.pack` to their real size + 256 KB after merging (never lowers; tested against zeldamods/rstb).
+  - The shipped RSTB was raised as well.
+  - Lesson: any change that grows `merge/TitleBG.pack` or `merge/Bootup.pack` also grows the pack itself; the installer now covers that.
 * **Removed**:
   - The Weather-hook spawn path (it never dispatched, and it raced `mainFn` on `ringPtr`).
   - The 100-unit "teleport detector" (it orphaned live remote actors).

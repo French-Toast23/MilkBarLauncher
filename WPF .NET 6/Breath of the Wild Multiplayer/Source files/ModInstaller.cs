@@ -233,6 +233,19 @@ namespace Breath_of_the_Wild_Multiplayer.Source_files
             MergePack(Path.Combine(updateDir, "Pack", "TitleBG.pack"), Path.Combine(source, "merge", "TitleBG.pack"),
                       Path.Combine(PackContentDir, "Pack", "TitleBG.pack"), deepMergeActorPacks: true);
 
+            // The merged packs are the player's own files plus ours, so their size differs per game copy. Raise their
+            // resource size table entries to the real size + headroom, or the game overflows the buffer it
+            // allocates for them and crashes while booting (TitleBG.pack was 12 KB over on 17 Nov 2026).
+            progress("Updating resource sizes...");
+            string rstb = Path.Combine(PackContentDir, "System", "Resource", "ResourceSizeTable.product.srsizetable");
+            if (File.Exists(rstb))
+            {
+                const uint headroom = 0x40000; // 256 KB
+                RstbPatcher.EnsureAtLeast(rstb,
+                    ("Pack/TitleBG.pack", (uint)new FileInfo(Path.Combine(PackContentDir, "Pack", "TitleBG.pack")).Length + headroom),
+                    ("Pack/Bootup.pack", (uint)new FileInfo(Path.Combine(PackContentDir, "Pack", "Bootup.pack")).Length + headroom));
+            }
+
             string pauseMenu = Path.Combine(updateDir, "Actor", "Pack", "PauseMenuPlayer.sbactorpack");
             if (File.Exists(pauseMenu))
             {
