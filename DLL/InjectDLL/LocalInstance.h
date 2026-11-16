@@ -353,31 +353,46 @@ namespace MemoryAccess
 				if (e->All[i] == chainHash)
 				{
 					lastConsistentAnim = chainHash;
+					RememberWeaponFamily(chainHash);
 					return chainHash;
 				}
 			if (e->PlayableCount == 0)
 				return chainHash;
-			return PickPlayable(e, lastConsistentAnim);
+			return PickPlayable(e);
 		}
 
-		// The AS's playable clip whose name is closest to the reference clip (same weapon family: Sword_*,
-		// Spear_*, Lsword_*...), or the AS's default (first in LinkASMap order).
-		static uint32_t PickPlayable(const LinkASMap::Entry* e, uint32_t reference)
+		// ---- Weapon family: the same action has one clip per weapon type (CutS1 = Sword_Attack_S1,
+		// Sword_Blunt_Attack_S1 for clubs, Spear_..., Lsword_...). Remembered from the last real clip seen.
+		std::string weaponFamily = "Sword";
+
+		void RememberWeaponFamily(uint32_t hash)
 		{
-			uint32_t best = e->Playable[0];
-			if (reference != 0)
-			{
-				std::string last = AnimNames::Lookup(reference);
-				size_t bestLen = 4; // must share more than a short prefix to beat the default
+			std::string n = AnimNames::Lookup(hash);
+			static const char* families[] = { "Sword_Blunt", "SwordNoShield", "Lsword", "Spear", "BowNoArrorw", "Bow", "Sword" };
+			for (const char* f : families)
+				if (n.rfind(std::string(f) + "_", 0) == 0) { weaponFamily = f; return; }
+		}
+
+		static bool MatchesFamily(const std::string& clip, const std::string& family)
+		{
+			return clip.rfind(family + "_", 0) == 0 || clip.find("_" + family + "_") != std::string::npos;
+		}
+
+		// The AS's best clip (LinkASMap order = best match for the action name) for the weapon in hand, or
+		// unarmed when no weapon is drawn. Falls back to the closest family (club -> sword), then the default.
+		uint32_t PickPlayable(const LinkASMap::Entry* e)
+		{
+			bool armed = !this->IsEquipped || !this->IsEquipped->isAddressSet() || this->IsEquipped->get("PickPlayable");
+			std::vector<std::string> prefs;
+			if (!armed) prefs.push_back("Nml");
+			prefs.push_back(weaponFamily);
+			if (weaponFamily == "Sword_Blunt" || weaponFamily == "SwordNoShield") prefs.push_back("Sword");
+			if (weaponFamily == "BowNoArrorw") prefs.push_back("Bow");
+			for (const std::string& fam : prefs)
 				for (int i = 0; i < e->PlayableCount; i++)
-				{
-					std::string cand = AnimNames::Lookup(e->Playable[i]);
-					size_t n = 0;
-					while (n < cand.size() && n < last.size() && cand[n] == last[n]) n++;
-					if (n > bestLen) { bestLen = n; best = e->Playable[i]; }
-				}
-			}
-			return best;
+					if (MatchesFamily(AnimNames::Lookup(e->Playable[i]), fam))
+						return e->Playable[i];
+			return e->Playable[0];
 		}
 
 		// Upper-body overlay: Link layers shield raise (WaitAttentionUpper / MoveAttentionUpper), horse call,
@@ -390,7 +405,7 @@ namespace MemoryAccess
 			const LinkASMap::Entry* e = LinkASMap::Find(asName.c_str());
 			if (!e || e->PlayableCount == 0)
 				return 0;
-			return PickPlayable(e, lastConsistentAnim);
+			return PickPlayable(e);
 		}
 
 		// Diagnostics: the AS playing on each of Link's animation targets (IDA, 15 Nov 2026).
